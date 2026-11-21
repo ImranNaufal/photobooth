@@ -19,10 +19,14 @@ use services::{
 slint::include_modules!();
 
 fn main() -> anyhow::Result<()> {
-    // 1. Initialize logging
-    tracing_subscriber::fmt::init();
+    // 1. Initialize dual logging (local rolling file in logs/photobooth.log + in-memory ring buffer)
+    let make_writer = services::LoggerService::init();
+    tracing_subscriber::fmt()
+        .with_writer(make_writer)
+        .with_ansi(false)
+        .init();
 
-    info!("Starting Photobooth-RS Kiosk System...");
+    info!("Starting Photobooth-RS Kiosk System (with persistent & remote web logging)...");
 
     // 2. Initialize Tokio Runtime for background hardware, web server, and heavy computation
     let rt = tokio::runtime::Builder::new_multi_thread()

@@ -12,6 +12,8 @@ use std::sync::Arc;
 use tokio::fs;
 use tracing::{error, info};
 
+use crate::services::LoggerService;
+
 #[derive(Clone)]
 pub struct WebService {
     local_ip: IpAddr,
@@ -50,6 +52,9 @@ impl WebService {
         tokio::spawn(async move {
             let app = Router::new()
                 .route("/", get(handle_root))
+                .route("/logs", get(handle_logs_page))
+                .route("/logs/raw", get(handle_logs_raw))
+                .route("/api/logs", get(handle_logs_api))
                 .route("/s/:id", get(handle_share_page))
                 .route("/photo/:id", get(handle_photo))
                 .route("/download/:id", get(handle_download));
@@ -250,4 +255,154 @@ async fn handle_download(Path(id): Path<String>) -> Result<Response<Body>, Statu
         }
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
+}
+
+async fn handle_logs_api() -> Response<Body> {
+    let logs = LoggerService::get_recent_logs();
+    let json = serde_json::to_string(&logs).unwrap_or_else(|_| "[]".into());
+    Response::builder()
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .body(Body::from(json))
+        .unwrap()
+}
+
+async fn handle_logs_raw() -> Response<Body> {
+    match LoggerService::read_full_log_file() {
+        Ok(content) => Response::builder()
+            .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+            .header(header::CONTENT_DISPOSITION, "attachment; filename=\"photobooth.log\"")
+            .body(Body::from(content))
+            .unwrap(),
+        Err(_) => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("No log file found on kiosk."))
+            .unwrap(),
+    }
+}
+
+async fn handle_logs_page() -> Html<String> {
+    let raw_logs = LoggerService::get_recent_logs();
+    let mut log_html = String::new();
+
+    for line in &raw_logs {
+        let (color, bg) = if line.contains("ERROR") || line.contains("error") {
+            ("#f87171", "rgba(239, 68, 68, 0.15)")
+        } else if line.contains("WARN") || line.contains("warn") {
+            ("#fbbf24", "rgba(245, 158, 11, 0.12)")
+        } else if line.contains("INFO") {
+            ("#38bdf8", "transparent")
+        } else {
+            ("#94a3b8", "transparent")
+        };
+
+        let escaped = line
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
+
+        log_html.push_str(&format!(
+            r#"<div style="color: {}; background: {}; padding: 3px 8px; border-radius: 4px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.45; word-break: break-all;">{}</div>"#,
+            color, bg, escaped
+        ));
+    }
+
+    if log_html.is_empty() {
+        log_html.push_str(r#"<div style="color: #64748b; padding: 12px; font-style: italic;">No logs recorded yet.</div>"#);
+    }
+
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Photobooth RS - Remote Diagnostics & Logs</title>
+    <style>
+        body {{
+            margin: 0; padding: 20px;
+            background: #0B0F19; color: #F1F5F9;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }}
+        .container {{ max-width: 1000px; margin: 0 auto; }}
+        .header {{
+            display: flex; justify-content: space-between; align-items: center;
+            background: #111827; border: 1px solid #1F2937;
+            padding: 18px 24px; border-radius: 16px; margin-bottom: 16px;
+        }}
+        .title h1 {{ margin: 0; font-size: 20px; font-weight: 800; color: #818CF8; }}
+        .title p {{ margin: 4px 0 0; font-size: 13px; color: #94A3B8; }}
+        .actions a, .actions button {{
+            display: inline-flex; align-items: center; gap: 6px;
+            background: #312E81; color: #E0E7FF; text-decoration: none;
+            padding: 8px 16px; border-radius: 999px; font-size: 13px; font-weight: 600;
+            border: 1px solid #4338CA; cursor: pointer; transition: all 0.2s;
+        }}
+        .actions a:hover, .actions button:hover {{ background: #4338CA; }}
+        .badge {{
+            display: inline-block; padding: 2px 8px; border-radius: 12px;
+            font-size: 11px; font-weight: 700; background: #064E3B; color: #6EE7B7;
+            margin-left: 8px;
+        }}
+        .log-box {{
+            background: #090D16; border: 1px solid #1E293B; border-radius: 16px;
+            padding: 16px; min-height: 480px; max-height: 75vh; overflow-y: auto;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="title">
+                <h1>📸 Photobooth RS Diagnostics <span class="badge">LIVE</span></h1>
+                <p>Real-time terminal stream from remote kiosk • Auto-refreshes every 3s</p>
+            </div>
+            <div class="actions">
+                <button onclick="location.reload()">🔄 Refresh</button>
+                <a href="/logs/raw">📥 Download .log</a>
+            </div>
+        </div>
+        <div class="log-box" id="logBox">
+            {}
+        </div>
+    </div>
+    <script>
+        // Auto-scroll to the bottom of the log viewer
+        const logBox = document.getElementById('logBox');
+        logBox.scrollTop = logBox.scrollHeight;
+
+        // Auto reload log every 3 seconds
+        setInterval(async () => {{
+            try {{
+                const res = await fetch('/api/logs');
+                if (res.ok) {{
+                    const logs = await res.json();
+                    let html = '';
+                    for (const line of logs) {{
+                        let color = '#94a3b8';
+                        let bg = 'transparent';
+                        if (line.includes('ERROR') || line.includes('error')) {{
+                            color = '#f87171'; bg = 'rgba(239, 68, 68, 0.15)';
+                        }} else if (line.includes('WARN') || line.includes('warn')) {{
+                            color = '#fbbf24'; bg = 'rgba(245, 158, 11, 0.12)';
+                        }} else if (line.includes('INFO')) {{
+                            color = '#38bdf8';
+                        }}
+                        const esc = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                        html += `<div style="color: ${{color}}; background: ${{bg}}; padding: 3px 8px; border-radius: 4px; font-family: monospace; font-size: 13px; line-height: 1.45; word-break: break-all;">${{esc}}</div>`;
+                    }}
+                    const isAtBottom = (logBox.scrollHeight - logBox.scrollTop - logBox.clientHeight) < 40;
+                    logBox.innerHTML = html;
+                    if (isAtBottom) {{ logBox.scrollTop = logBox.scrollHeight; }}
+                }}
+            }} catch (e) {{}}
+        }}, 3000);
+    </script>
+</body>
+</html>"#,
+        log_html
+    );
+
+    Html(html)
 }

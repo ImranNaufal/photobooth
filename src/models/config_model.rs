@@ -22,6 +22,8 @@ pub struct AppConfig {
     pub update_check_url: String,
     #[serde(default = "default_true")]
     pub auto_check_update: bool,
+    #[serde(default)]
+    pub alert_webhook_url: String,
 }
 
 fn default_app_version() -> String {
@@ -51,6 +53,7 @@ impl Default for AppConfig {
             app_version: default_app_version(),
             update_check_url: default_update_url(),
             auto_check_update: true,
+            alert_webhook_url: String::new(),
         }
     }
 }
