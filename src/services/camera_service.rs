@@ -199,6 +199,15 @@ impl CameraProvider for Canon700dCamera {
     }
 
     fn is_healthy(&self) -> bool {
+        let possible_cli = [
+            Path::new(r"C:\Program Files (x86)\digiCamControl\CameraControlCmd.exe"),
+            Path::new(r"C:\Program Files\digiCamControl\CameraControlCmd.exe"),
+            Path::new(r"CameraControlCmd.exe"),
+        ];
+        if possible_cli.iter().any(|p| p.exists()) {
+            return true;
+        }
+
         let test_url = format!("{}/liveview.jpg", self.base_url.trim_end_matches('/'));
         self.client.head(&test_url).send().map_or(false, |r| {
             r.status().is_success() || r.status().as_u16() == 404
@@ -207,8 +216,51 @@ impl CameraProvider for Canon700dCamera {
 
     fn capture_photo(&self, dest_path: &Path, shot_index: u8) -> anyhow::Result<PathBuf> {
         let capture_start = SystemTime::now();
+
+        // 1. Direct Headless CLI Shutter (CameraControlCmd.exe)
+        // Auto-connects directly to Canon DSLR over USB without needing GUI or web server!
+        let possible_cli = [
+            PathBuf::from(r"C:\Program Files (x86)\digiCamControl\CameraControlCmd.exe"),
+            PathBuf::from(r"C:\Program Files\digiCamControl\CameraControlCmd.exe"),
+            PathBuf::from(r"CameraControlCmd.exe"),
+        ];
+
+        for cli in &possible_cli {
+            if cli.exists() {
+                info!("Triggering Direct Canon Shutter via CLI: {:?}", cli);
+                if let Some(parent) = dest_path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+
+                let mut cmd = std::process::Command::new(cli);
+                cmd.args(["/capture", "/filename", dest_path.to_str().unwrap_or_default()]);
+
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::process::CommandExt;
+                    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                }
+
+                if let Ok(status) = cmd.status() {
+                    if status.success() || dest_path.exists() {
+                        if dest_path.exists() {
+                            let size = dest_path.metadata().map(|m| m.len()).unwrap_or(0);
+                            if size > 10_000 {
+                                info!(
+                                    "Direct Canon CLI captured high-res DSLR photo ({} bytes) for pose #{} to {:?}",
+                                    size, shot_index, dest_path
+                                );
+                                return Ok(dest_path.to_path_buf());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Fallback: HTTP Web Server Mode
         info!(
-            "Sending capture command to digiCamControl: {}",
+            "Sending capture command to digiCamControl web server: {}",
             self.base_url
         );
         let capture_url = format!("{}/?SLC=Capture", self.base_url.trim_end_matches('/'));
