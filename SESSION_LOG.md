@@ -413,9 +413,11 @@ Dokumen ini merekodkan sejarah setiap perbualan, keputusan seni bina, perubahan 
 3. **Penyediaan Initial Commit:**
    * Mementaskan 49 fail teras projek (kod sumber Rust, antaramuka Slint UI, templat bingkai, aset ikon, ujian unit, dan skrip pelancar).
    * Menghasilkan komit awal yang bersih: `feat: complete Photobooth RS kiosk with Slint UI, laptop webcam, layout selector & auto-updater` (Hash: `0bba27c`).
-4. **Konfigurasi Git Semasa:**
-   * Pengguna global: `imran` (`imrannaufal0404@gmail.com`).
-   * Pembantu pengesahan: Windows Git Credential Manager aktif.
+4. **Penyambungan Repositori GitHub & Tolakan (*Push*) Berjaya:**
+   * Remote ditambahkan: `https://github.com/ImranNaufal/photobooth.git`.
+   * Cawangan `main` berjaya ditolak (*pushed*) ke GitHub dengan pengesahan Windows Git Credential Manager.
+   * Pautan semakan versi auto-update diselaraskan ke `https://raw.githubusercontent.com/ImranNaufal/photobooth/main/dist/version.json`.
+   * Fail `dist/version.json` dijejak dalam Git supaya kiosk rakan/klien sentiasa dapat menyemak versi terbaharu secara terus dari repositori.
 
 ---
 
