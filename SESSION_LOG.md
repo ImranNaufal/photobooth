@@ -421,6 +421,32 @@ Dokumen ini merekodkan sejarah setiap perbualan, keputusan seni bina, perubahan 
 
 ---
 
+## Log Sesi 15: 21 November 2026 (Pelaksanaan Sistem Log Jarak Jauh / Remote Diagnostics & Web Dashboard /logs)
+
+### 1. Objektif & Permintaan Pengguna
+* Pengguna bertanyakan cara untuk menyemak log dari jauh, mengubah kod dan terus mengemaskini di komputer kawan, serta memudahkan proses nyahpepijat (*debugging*) dan kawalan jarak jauh tanpa membuka terminal ("mcm mana kau nak check log? ubah code terus update kat dia? ada cara tak?").
+
+### 2. Tindakan Yang Diambil
+1. **Perkhidmatan Log Setempat Berterusan (`LoggerService`):**
+   * Membina [src/services/logger_service.rs](file:///c:/Users/it-01995/Downloads/camera-ilhan/src/services/logger_service.rs) yang menulis setiap peristiwa `tracing` ke fail fizikal [logs/photobooth.log](file:///c:/Users/it-01995/Downloads/camera-ilhan/dist/Photobooth-RS-Portable/logs/photobooth.log).
+   * Melaksanakan penimbal memori (*in-memory ring buffer*) 300 baris terkini secara segerak dan selamat (*thread-safe*).
+2. **Papan Pemuka Web Jarak Jauh (*Remote Web Diagnostic Console*):**
+   * Mengintegrasikan laluan baharu dalam [src/services/web_service.rs](file:///c:/Users/it-01995/Downloads/camera-ilhan/src/services/web_service.rs):
+     * `/logs`: Paparan web tema gelap konsol langsung dengan auto-refresh setiap 3 saat, pengesanan warna ralat (Merah untuk ERROR, Kuning untuk WARN, Biru untuk INFO), dan butang muat turun.
+     * `/logs/raw`: Muat turun fail teks asal `photobooth.log`.
+     * `/api/logs`: Titik akhir JSON untuk integrasi telemetri.
+3. **Pemberitahuan Amaran Webhook:**
+   * Melaksanakan fungsi `send_webhook_alert` untuk menyokong penghantaran amaran ralat kritikal ke Discord Webhook atau Telegram Bot.
+4. **Penerbitan Binaan Release Terkini & Tolakan Git:**
+   * Menjana binari pengeluaran terbaharu (23 MB) dan arkib [dist/Photobooth-RS-Portable.zip](file:///c:/Users/it-01995/Downloads/camera-ilhan/dist/Photobooth-RS-Portable.zip) (10.86 MB).
+   * Berjaya menolak komit `32fbb44` ke repositori rasmi GitHub `ImranNaufal/photobooth`.
+
+### 3. Pengesahan & Ujian
+* Ujian pelaksanaan binari menghasilkan fail `logs/photobooth.log` secara serta-merta dengan cap masa ISO tepat.
+* Papan pemuka web `http://<IP>:8080/logs` disahkan menyajikan aliran log masa nyata.
+
+---
+
 ## Arahan Untuk Sesi Seterusnya (Next Session Guide)
 
 ### Cara Menjalankan Aplikasi
