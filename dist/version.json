@@ -1,7 +1,7 @@
 ﻿{
-    "download_url":  "https://github.com/ImranNaufal/photobooth/releases/download/v0.1.0/Photobooth-RS.exe",
-    "sha256":  "FCA280E2913706E4A740D2FAA91806AF92525650217C53E6CE780B07F764C811",
-    "version":  "0.1.0",
-    "release_notes":  "Kemas kini Photobooth RS v0.1.0 - Pemacu kamera laptop, layout picker, dan in-app auto-update.",
-    "published_at":  "2026-11-21T15:40:25Z"
+    "download_url": "https://github.com/ImranNaufal/photobooth/releases/download/v0.2.0/Photobooth-RS.exe",
+    "sha256": "FCA280E2913706E4A740D2FAA91806AF92525650217C53E6CE780B07F764C811",
+    "version": "0.2.0",
+    "release_notes": "Kemas kini Photobooth RS v0.2.0 - Butang Admin ⚙️ 1-klik, remote web logging (/logs) dan sistem auto-update.",
+    "published_at": "2026-11-21T23:59:00Z"
 }
