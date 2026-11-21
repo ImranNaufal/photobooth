@@ -228,7 +228,7 @@ impl AdminController {
 
             let (app_ver, update_url) = {
                 let cfg = config_clone.read().await;
-                (cfg.app_version.clone(), cfg.update_check_url.clone())
+                (crate::models::APP_VERSION.to_string(), cfg.update_check_url.clone())
             };
 
             match UpdaterService::check_for_updates(&app_ver, &update_url).await {
@@ -284,7 +284,7 @@ impl AdminController {
 
             let (app_ver, update_url) = {
                 let cfg = config_clone.read().await;
-                (cfg.app_version.clone(), cfg.update_check_url.clone())
+                (crate::models::APP_VERSION.to_string(), cfg.update_check_url.clone())
             };
 
             if let Ok(Some(info)) = UpdaterService::check_for_updates(&app_ver, &update_url).await {

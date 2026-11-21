@@ -4,6 +4,7 @@ use std::path::Path;
 use tracing::{error, info};
 
 pub const CONFIG_FILE_PATH: &str = "config.json";
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -27,7 +28,7 @@ pub struct AppConfig {
 }
 
 fn default_app_version() -> String {
-    "0.1.0".to_string()
+    APP_VERSION.to_string()
 }
 
 fn default_update_url() -> String {
@@ -64,8 +65,9 @@ impl AppConfig {
         if path_ref.exists() {
             match fs::read_to_string(path_ref) {
                 Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
-                    Ok(cfg) => {
+                    Ok(mut cfg) => {
                         info!("Loaded configuration from {:?}", path_ref);
+                        cfg.app_version = APP_VERSION.to_string();
                         return cfg;
                     }
                     Err(err) => {
@@ -86,7 +88,9 @@ impl AppConfig {
     }
 
     pub fn save_to<P: AsRef<Path>>(&self, path: P) -> anyhow::Result<()> {
-        let json_str = serde_json::to_string_pretty(self)?;
+        let mut to_save = self.clone();
+        to_save.app_version = APP_VERSION.to_string();
+        let json_str = serde_json::to_string_pretty(&to_save)?;
         fs::write(path.as_ref(), json_str)?;
         info!("Saved configuration to {:?}", path.as_ref());
         Ok(())

@@ -19,6 +19,14 @@ use services::{
 slint::include_modules!();
 
 fn main() -> anyhow::Result<()> {
+    // 0. Enforce current working directory to the folder containing the executable
+    // This prevents relative paths from resolving to C:\Windows\System32 when launched via Task Scheduler or shortcuts
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let _ = std::env::set_current_dir(exe_dir);
+        }
+    }
+
     // 1. Initialize dual logging (local rolling file in logs/photobooth.log + in-memory ring buffer)
     let make_writer = services::LoggerService::init();
     tracing_subscriber::fmt()
@@ -83,7 +91,7 @@ fn main() -> anyhow::Result<()> {
     window.set_active_template_id(config.active_template_id.clone().into());
     window.set_printer_name(config.printer_name.clone().into());
     window.set_countdown_seconds_setting(config.countdown_seconds as i32);
-    window.set_app_version(format!("v{}", config.app_version).into());
+    window.set_app_version(format!("v{}", models::APP_VERSION).into());
     window.set_current_state(AppState::Idle);
 
     // 8. Instantiate Controllers

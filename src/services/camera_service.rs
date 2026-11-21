@@ -217,6 +217,19 @@ impl CameraProvider for Canon700dCamera {
     fn capture_photo(&self, dest_path: &Path, shot_index: u8) -> anyhow::Result<PathBuf> {
         let capture_start = SystemTime::now();
 
+        // Resolve absolute destination path to guarantee it writes to the intended folder
+        let abs_dest = if dest_path.is_absolute() {
+            dest_path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(dest_path)
+        };
+
+        if let Some(parent) = abs_dest.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+
         // 1. Direct Headless CLI Shutter (CameraControlCmd.exe)
         // Auto-connects directly to Canon DSLR over USB without needing GUI or web server!
         let possible_cli = [
@@ -227,13 +240,14 @@ impl CameraProvider for Canon700dCamera {
 
         for cli in &possible_cli {
             if cli.exists() {
-                info!("Triggering Direct Canon Shutter via CLI: {:?}", cli);
-                if let Some(parent) = dest_path.parent() {
-                    let _ = fs::create_dir_all(parent);
-                }
+                info!("Triggering Direct Canon Shutter via CLI: {:?} to {:?}", cli, abs_dest);
+
+                // Remove previous file so we only accept fresh capture
+                let _ = fs::remove_file(&abs_dest);
 
                 let mut cmd = std::process::Command::new(cli);
-                cmd.args(["/capture", "/filename", dest_path.to_str().unwrap_or_default()]);
+                let abs_str = abs_dest.to_string_lossy();
+                cmd.args(["/capture", "/filename", &abs_str]);
 
                 #[cfg(target_os = "windows")]
                 {
@@ -241,18 +255,17 @@ impl CameraProvider for Canon700dCamera {
                     cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
                 }
 
-                if let Ok(status) = cmd.status() {
-                    if status.success() || dest_path.exists() {
-                        if dest_path.exists() {
-                            let size = dest_path.metadata().map(|m| m.len()).unwrap_or(0);
-                            if size > 10_000 {
-                                info!(
-                                    "Direct Canon CLI captured high-res DSLR photo ({} bytes) for pose #{} to {:?}",
-                                    size, shot_index, dest_path
-                                );
-                                return Ok(dest_path.to_path_buf());
-                            }
-                        }
+                let status = cmd.status();
+                info!("CameraControlCmd status: {:?}", status);
+
+                if abs_dest.exists() {
+                    let size = abs_dest.metadata().map(|m| m.len()).unwrap_or(0);
+                    if size > 10_000 {
+                        info!(
+                            "Direct Canon CLI captured high-res DSLR photo ({} bytes) for pose #{} to {:?}",
+                            size, shot_index, abs_dest
+                        );
+                        return Ok(abs_dest);
                     }
                 }
             }
@@ -284,12 +297,9 @@ impl CameraProvider for Canon700dCamera {
                 if resp.status().is_success() {
                     if let Ok(bytes) = resp.bytes() {
                         if !bytes.is_empty() {
-                            if let Some(parent) = dest_path.parent() {
-                                fs::create_dir_all(parent)?;
-                            }
-                            fs::write(dest_path, &bytes)?;
-                            info!("Successfully saved captured photo to {:?}", dest_path);
-                            return Ok(dest_path.to_path_buf());
+                            fs::write(&abs_dest, &bytes)?;
+                            info!("Successfully saved captured photo to {:?}", abs_dest);
+                            return Ok(abs_dest);
                         }
                     }
                 }
@@ -324,15 +334,12 @@ impl CameraProvider for Canon700dCamera {
                 }
 
                 if let Some((src, _)) = latest_file {
-                    if let Some(parent) = dest_path.parent() {
-                        fs::create_dir_all(parent)?;
-                    }
-                    fs::copy(&src, dest_path)?;
+                    fs::copy(&src, &abs_dest)?;
                     info!(
                         "Copied photo from digiCamControl session to {:?}",
-                        dest_path
+                        abs_dest
                     );
-                    return Ok(dest_path.to_path_buf());
+                    return Ok(abs_dest);
                 }
             }
         }
@@ -340,7 +347,7 @@ impl CameraProvider for Canon700dCamera {
         // If hardware is not reachable, fallback to Mock image generation to prevent crash
         warn!("Canon 700D hardware capture timed out. Falling back to synthetic capture for pose #{}.", shot_index);
         let mock = MockCamera::new();
-        mock.capture_photo(dest_path, shot_index)
+        mock.capture_photo(&abs_dest, shot_index)
     }
 }
 

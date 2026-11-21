@@ -160,11 +160,13 @@ if exist "{current_exe}" (
     goto loop
 )
 move /y "{new_exe}" "{current_exe}" > nul 2>&1
+cd /d "{current_dir}"
 start "" "{current_exe}"
 del "%~f0"
 "#,
             current_exe = current_exe.display(),
             new_exe = new_exe.display(),
+            current_dir = current_dir.display(),
         );
 
         fs::write(&script_path, script_content)?;
@@ -178,6 +180,7 @@ del "%~f0"
 
             std::process::Command::new("cmd.exe")
                 .args(["/c", &script_path.to_string_lossy()])
+                .current_dir(current_dir)
                 .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
                 .spawn()?;
             
