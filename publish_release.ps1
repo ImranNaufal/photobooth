@@ -1,4 +1,4 @@
-# ====================================================================
+﻿# ====================================================================
 # Photobooth RS - Skrip Penerbitan Automatik (Publish Release)
 # ====================================================================
 # Skrip ini mengkompilasi kod versi release, mengemas kini pakej
@@ -70,7 +70,7 @@ $publishedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 $versionJson = @{
     version = $version
     release_notes = "Kemas kini Photobooth RS v$version - Pemacu kamera laptop, layout picker, dan in-app auto-update."
-    download_url = "https://raw.githubusercontent.com/OWNER/REPO/main/releases/Photobooth-RS.exe"
+    download_url = "https://github.com/ImranNaufal/photobooth/releases/download/v$version/Photobooth-RS.exe"
     sha256 = $hash
     published_at = $publishedAt
 } | ConvertTo-Json -Depth 4

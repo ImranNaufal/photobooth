@@ -399,6 +399,26 @@ Dokumen ini merekodkan sejarah setiap perbualan, keputusan seni bina, perubahan 
 
 ---
 
+## Log Sesi 14: 21 November 2026 (Inisialisasi Git Tempatan & Penyediaan Commit Awal)
+
+### 1. Objektif & Permintaan Pengguna
+* Pengguna meminta untuk menolak (*push*) keseluruhan kod projek ke GitHub ("tolong push code kat sini boleh?").
+
+### 2. Tindakan Yang Diambil
+1. **Inisialisasi Git Tempatan:**
+   * Menjalankan `git init` dalam direktori projek `c:\Users\it-01995\Downloads\camera-ilhan`.
+   * Menetapkan cawangan lalai kepada `main` (`git branch -M main`).
+2. **Pengemaskinian `.gitignore`:**
+   * Memastikan direktori `dist/` dikecualikan daripada kawalan versi git supaya fail binari `.exe` (23 MB) dan arkib `.zip` tidak membebankan saiz repositori kod sumber.
+3. **Penyediaan Initial Commit:**
+   * Mementaskan 49 fail teras projek (kod sumber Rust, antaramuka Slint UI, templat bingkai, aset ikon, ujian unit, dan skrip pelancar).
+   * Menghasilkan komit awal yang bersih: `feat: complete Photobooth RS kiosk with Slint UI, laptop webcam, layout selector & auto-updater` (Hash: `0bba27c`).
+4. **Konfigurasi Git Semasa:**
+   * Pengguna global: `imran` (`imrannaufal0404@gmail.com`).
+   * Pembantu pengesahan: Windows Git Credential Manager aktif.
+
+---
+
 ## Arahan Untuk Sesi Seterusnya (Next Session Guide)
 
 ### Cara Menjalankan Aplikasi

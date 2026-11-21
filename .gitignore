@@ -1,6 +1,9 @@
 # Rust build artifacts
 /target/
-/dist/
+
+# Release and distribution builds (track version metadata, ignore large binaries)
+/dist/*
+!/dist/version.json
 
 # Generated SQLite runtime database
 booth_sessions.db*

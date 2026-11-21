@@ -29,7 +29,7 @@ fn default_app_version() -> String {
 }
 
 fn default_update_url() -> String {
-    "https://raw.githubusercontent.com/OWNER/REPO/main/releases/version.json".to_string()
+    "https://raw.githubusercontent.com/ImranNaufal/photobooth/main/dist/version.json".to_string()
 }
 
 fn default_true() -> bool {
