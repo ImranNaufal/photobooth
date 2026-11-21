@@ -58,7 +58,9 @@ if (Test-Path ".\dist\Photobooth-RS-Portable\PANDUAN_PENGGUNAAN.txt") {
     Copy-Item ".\dist\Photobooth-RS-Portable\PANDUAN_PENGGUNAAN.txt" "$distDir\PANDUAN_PENGGUNAAN.txt"
 }
 
-# Update ZIP package
+# Update ZIP and raw release binary
+New-Item -ItemType Directory -Path ".\releases" -Force | Out-Null
+Copy-Item $releaseExe ".\releases\Photobooth-RS.exe"
 $zipPath = ".\dist\Photobooth-RS-Portable.zip"
 if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
 Compress-Archive -Path "$distDir\*" -DestinationPath $zipPath -CompressionLevel Optimal
@@ -70,7 +72,7 @@ $publishedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 $versionJson = @{
     version = $version
     release_notes = "Kemas kini Photobooth RS v$version - Pemacu kamera laptop, layout picker, dan in-app auto-update."
-    download_url = "https://github.com/ImranNaufal/photobooth/releases/download/v$version/Photobooth-RS.exe"
+    download_url = "https://github.com/ImranNaufal/photobooth/raw/main/releases/Photobooth-RS.exe"
     sha256 = $hash
     published_at = $publishedAt
 } | ConvertTo-Json -Depth 4

@@ -1,5 +1,5 @@
 {
-    "download_url":  "https://github.com/ImranNaufal/photobooth/releases/download/v0.2.0/Photobooth-RS.exe",
+    "download_url":  "https://github.com/ImranNaufal/photobooth/raw/main/releases/Photobooth-RS.exe",
     "sha256":  "928DF8347174CFB7C3CE207433F9A560454C504544549593F3401CFA017C931C",
     "version":  "0.2.0",
     "release_notes":  "Kemas kini Photobooth RS v0.2.0 - Pemacu kamera laptop, layout picker, dan in-app auto-update.",
