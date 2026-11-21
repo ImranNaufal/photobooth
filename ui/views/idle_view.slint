@@ -1,0 +1,304 @@
+import { Theme } from "../theme.slint";
+import { AnimatedButton } from "../components/animated_button.slint";
+
+export component IdleView {
+    callback start_session();
+    callback open_admin();
+    callback select_template(string);
+
+    in property <int> admin_tap_count: 0;
+    in property <string> active_template_id: "default-4r-3pose";
+
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.background;
+
+        // Decorative background glowing orbs
+        Rectangle {
+            x: root.width * 0.15;
+            y: root.height * 0.2;
+            width: 320px;
+            height: 320px;
+            border-radius: 160px;
+            background: #6366f1;
+            opacity: 0.12;
+        }
+
+        Rectangle {
+            x: root.width * 0.7;
+            y: root.height * 0.55;
+            width: 400px;
+            height: 400px;
+            border-radius: 200px;
+            background: #ec4899;
+            opacity: 0.09;
+        }
+
+        // Main Center Attract Container
+        VerticalLayout {
+            alignment: center;
+            spacing: 28px;
+
+            // Brand / Title badge
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 220px;
+                    height: 44px;
+                    border-radius: Theme.radius_pill;
+                    background: #1e293b;
+                    border-width: 1px;
+                    border-color: Theme.border_highlight;
+
+                    Text {
+                        text: "✨ VINTAGE PHOTO STUDIO";
+                        color: #a5b4fc;
+                        font-size: 13px;
+                        font-weight: 700;
+                        letter-spacing: 2px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            // Hero Headline
+            Text {
+                text: "Capture The Moment";
+                color: Theme.text_primary;
+                font-size: 64px;
+                font-weight: 800;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: "Instant high-resolution photo prints & digital QR download";
+                color: Theme.text_secondary;
+                font-size: 20px;
+                horizontal-alignment: center;
+            }
+
+            // Feature Journey Badges
+            HorizontalLayout {
+                alignment: center;
+                spacing: 16px;
+
+                Rectangle {
+                    height: 36px;
+                    border-radius: Theme.radius_pill;
+                    background: rgba(30, 41, 59, 0.7);
+                    border-width: 1px;
+                    border-color: #334155;
+
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        alignment: center;
+                        Text {
+                            text: "📷 3 Pose Kiosk";
+                            color: #c7d2fe;
+                            font-size: 13px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 36px;
+                    border-radius: Theme.radius_pill;
+                    background: rgba(30, 41, 59, 0.7);
+                    border-width: 1px;
+                    border-color: #334155;
+
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        alignment: center;
+                        Text {
+                            text: "🖨️ Cetakan 300 DPI";
+                            color: #fbcfe8;
+                            font-size: 13px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 36px;
+                    border-radius: Theme.radius_pill;
+                    background: rgba(30, 41, 59, 0.7);
+                    border-width: 1px;
+                    border-color: #334155;
+
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        alignment: center;
+                        Text {
+                            text: "📲 Imbas QR Ke Telefon";
+                            color: #a7f3d0;
+                            font-size: 13px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            // Spacing
+            Rectangle { height: 8px; }
+
+            // Layout Selector: Choose format before starting!
+            HorizontalLayout {
+                alignment: center;
+                spacing: 20px;
+
+                // Option A: 4R Postcard
+                Rectangle {
+                    width: 240px;
+                    height: 80px;
+                    border-radius: Theme.radius_md;
+                    background: root.active_template_id == "default-4r-3pose" ? rgba(99, 102, 241, 0.25) : rgba(30, 41, 59, 0.6);
+                    border-width: root.active_template_id == "default-4r-3pose" ? 2px : 1px;
+                    border-color: root.active_template_id == "default-4r-3pose" ? #818cf8 : #334155;
+
+                    TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => {
+                            root.select_template("default-4r-3pose");
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        spacing: 12px;
+                        alignment: center;
+
+                        Text {
+                            text: "🖼️";
+                            font-size: 28px;
+                            vertical-alignment: center;
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 2px;
+
+                            Text {
+                                text: "4R Postcard";
+                                color: root.active_template_id == "default-4r-3pose" ? #ffffff : #cbd5e1;
+                                font-size: 15px;
+                                font-weight: 800;
+                            }
+                            Text {
+                                text: "1800 x 1200 • 3 Pose";
+                                color: root.active_template_id == "default-4r-3pose" ? #a5b4fc : #64748b;
+                                font-size: 12px;
+                                font-weight: 600;
+                            }
+                        }
+                    }
+                }
+
+                // Option B: 2x6 Photo Strip
+                Rectangle {
+                    width: 240px;
+                    height: 80px;
+                    border-radius: Theme.radius_md;
+                    background: root.active_template_id == "default-2x6-strip" ? rgba(236, 72, 153, 0.25) : rgba(30, 41, 59, 0.6);
+                    border-width: root.active_template_id == "default-2x6-strip" ? 2px : 1px;
+                    border-color: root.active_template_id == "default-2x6-strip" ? #ec4899 : #334155;
+
+                    TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => {
+                            root.select_template("default-2x6-strip");
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        spacing: 12px;
+                        alignment: center;
+
+                        Text {
+                            text: "🎞️";
+                            font-size: 28px;
+                            vertical-alignment: center;
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 2px;
+
+                            Text {
+                                text: "2x6 Strip Cut";
+                                color: root.active_template_id == "default-2x6-strip" ? #ffffff : #cbd5e1;
+                                font-size: 15px;
+                                font-weight: 800;
+                            }
+                            Text {
+                                text: "Potong Dua • 3 Pose";
+                                color: root.active_template_id == "default-2x6-strip" ? #f472b6 : #64748b;
+                                font-size: 12px;
+                                font-weight: 600;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Spacing
+            Rectangle { height: 8px; }
+
+            // Pulsing Call To Action Button
+            HorizontalLayout {
+                alignment: center;
+                cta_btn := AnimatedButton {
+                    text: "TOUCH TO START";
+                    font_size: 24px;
+                    btn_width: 360px;
+                    btn_height: 80px;
+                    primary: true;
+
+                    clicked => {
+                        root.start_session();
+                    }
+                }
+            }
+
+            // Subtitle
+            Text {
+                text: "Tap anywhere on the button to begin your photo session";
+                color: Theme.text_muted;
+                font-size: 15px;
+                horizontal-alignment: center;
+            }
+        }
+
+        // Hidden Admin Trigger: 100x100px top-right corner zone
+        Rectangle {
+            x: root.width - 120px;
+            y: 10px;
+            width: 110px;
+            height: 110px;
+            background: transparent;
+
+            TouchArea {
+                width: 100%;
+                height: 100%;
+                clicked => {
+                    root.open_admin();
+                }
+            }
+        }
+    }
+}
+

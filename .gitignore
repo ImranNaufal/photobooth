@@ -1,0 +1,28 @@
+# Rust build artifacts
+/target/
+/dist/
+
+# Generated SQLite runtime database
+booth_sessions.db*
+
+# Generated application runtime outputs (keep directory structure)
+/output/raw/*
+/output/composites/*
+/output/mock_prints/*
+!/output/raw/.gitkeep
+!/output/composites/.gitkeep
+!/output/mock_prints/.gitkeep
+
+# User-specific runtime config
+config.json
+
+# Windows temporary files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDE and Editor configurations
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace

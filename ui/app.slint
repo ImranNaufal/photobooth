@@ -1,0 +1,184 @@
+import { Theme } from "theme.slint";
+import { AnimatedButton } from "components/animated_button.slint";
+import { FlashOverlay } from "components/flash_overlay.slint";
+import { IdleView } from "views/idle_view.slint";
+import { CaptureView } from "views/capture_view.slint";
+import { ProcessingView } from "views/processing_view.slint";
+import { ResultView } from "views/result_view.slint";
+import { AdminModal } from "views/admin_modal.slint";
+
+export enum AppState {
+    Idle,
+    Capture,
+    Processing,
+    Result,
+    Admin
+}
+
+export component AppWindow inherits Window {
+    title: "Photobooth RS - Pro Kiosk";
+    icon: @image-url("../assets/icons/app_icon.png");
+    min-width: 1280px;
+    min-height: 720px;
+    default-font-family: "Segoe UI, Inter, Roboto, sans-serif";
+    background: Theme.background;
+
+    // Public Root Properties required by PRD
+    in-out property <AppState> current_state: AppState.Idle;
+    in-out property <image> live_view_image;
+    in-out property <image> composite_result_image;
+    in-out property <image> qr_code_image;
+    in-out property <int> countdown_value: 0;
+    in-out property <int> current_shot: 1;
+    in-out property <int> total_shots: 3;
+    in-out property <bool> flash_active: false;
+    in-out property <string> status_message: "";
+    in-out property <bool> is_hardware_mode: false;
+    in-out property <string> active_template_id: "default-4r-3pose";
+    in-out property <string> printer_name: "DS-RX1";
+    in-out property <int> countdown_seconds_setting: 3;
+    in-out property <int> auto_return_seconds: 15;
+    in-out property <bool> admin_unlocked: false;
+
+    // Software Version & In-App Auto-Update properties
+    in-out property <string> app_version: "v0.1.0";
+    in-out property <bool> is_checking_update: false;
+    in-out property <bool> update_available: false;
+    in-out property <string> update_version_string: "";
+    in-out property <string> update_status_text: "";
+    in-out property <float> update_progress: 0.0;
+
+    // Internal state for admin PIN keypad
+    property <string> admin_entered_pin: "";
+    property <int> admin_tap_counter: 0;
+
+    // Public Callbacks required by PRD
+    callback start_session();
+    callback print_current_session();
+    callback finish_session();
+    callback retake_session();
+    callback admin_unlock(string);
+    callback save_settings(bool, string, string, int);
+    callback test_camera();
+    callback test_printer();
+    callback check_for_updates();
+    callback apply_update();
+
+    // View Routing
+    if root.current_state == AppState.Idle : IdleView {
+        width: 100%;
+        height: 100%;
+        active_template_id: root.active_template_id;
+        select_template(id) => {
+            root.active_template_id = id;
+        }
+        start_session => {
+            root.start_session();
+        }
+        open_admin => {
+            root.admin_tap_counter += 1;
+            if root.admin_tap_counter >= 5 {
+                root.admin_tap_counter = 0;
+                root.admin_entered_pin = "";
+                root.admin_unlocked = false;
+                root.current_state = AppState.Admin;
+            }
+        }
+    }
+
+    if root.current_state == AppState.Capture : CaptureView {
+        width: 100%;
+        height: 100%;
+        live_view_image: root.live_view_image;
+        countdown_value: root.countdown_value;
+        current_shot: root.current_shot;
+        total_shots: root.total_shots;
+        status_message: root.status_message;
+    }
+
+    if root.current_state == AppState.Processing : ProcessingView {
+        width: 100%;
+        height: 100%;
+        status_message: root.status_message;
+    }
+
+    if root.current_state == AppState.Result : ResultView {
+        width: 100%;
+        height: 100%;
+        composite_result_image: root.composite_result_image;
+        qr_code_image: root.qr_code_image;
+        status_message: root.status_message;
+        auto_return_seconds: root.auto_return_seconds;
+
+        print_session => {
+            root.print_current_session();
+        }
+        finish_session => {
+            root.finish_session();
+        }
+        retake_session => {
+            root.retake_session();
+        }
+    }
+
+    if root.current_state == AppState.Admin : AdminModal {
+        width: 100%;
+        height: 100%;
+        is_unlocked: root.admin_unlocked;
+        is_hardware_mode: root.is_hardware_mode;
+        active_template_id: root.active_template_id;
+        printer_name: root.printer_name;
+        countdown_sec: root.countdown_seconds_setting;
+        entered_pin: root.admin_entered_pin;
+        status_message: root.status_message;
+        app_version: root.app_version;
+        is_checking_update: root.is_checking_update;
+        update_available: root.update_available;
+        update_version_string: root.update_version_string;
+        update_status_text: root.update_status_text;
+        update_progress: root.update_progress;
+
+        pin_digit_pressed(d) => {
+            root.admin_entered_pin = root.admin_entered_pin + d;
+        }
+        pin_clear_pressed => {
+            root.admin_entered_pin = "";
+        }
+        unlock_requested(pin) => {
+            root.admin_unlock(pin);
+        }
+        toggle_hardware_mode => {
+            root.is_hardware_mode = !root.is_hardware_mode;
+        }
+        set_template(id) => {
+            root.active_template_id = id;
+        }
+        change_countdown(sec) => {
+            root.countdown_seconds_setting = sec;
+        }
+        test_camera => {
+            root.test_camera();
+        }
+        test_printer => {
+            root.test_printer();
+        }
+        check_for_updates => {
+            root.check_for_updates();
+        }
+        apply_update => {
+            root.apply_update();
+        }
+        save_and_close => {
+            root.save_settings(root.is_hardware_mode, root.active_template_id, root.printer_name, root.countdown_seconds_setting);
+            root.current_state = AppState.Idle;
+        }
+        close_admin => {
+            root.current_state = AppState.Idle;
+        }
+    }
+
+    // Full screen shutter flash overlay (appears on top of everything)
+    FlashOverlay {
+        active: root.flash_active;
+    }
+}

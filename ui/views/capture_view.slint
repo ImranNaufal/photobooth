@@ -1,0 +1,313 @@
+import { Theme } from "../theme.slint";
+
+export component CaptureView {
+    width: 100%;
+    height: 100%;
+
+    in property <image> live_view_image;
+    in property <int> countdown_value: 0;
+    in property <int> current_shot: 1;
+    in property <int> total_shots: 3;
+    in property <string> status_message: "";
+
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.background;
+
+        VerticalLayout {
+            padding-left: 28px;
+            padding-right: 28px;
+            padding-top: 20px;
+            padding-bottom: 20px;
+            spacing: 14px;
+
+            // Top Header: Shot Counter, User Instruction & Mode Info
+            HorizontalLayout {
+                height: 52px;
+                alignment: space-between;
+
+                // Shot badge
+                Rectangle {
+                    width: 210px;
+                    height: 48px;
+                    border-radius: Theme.radius_pill;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border_highlight;
+
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 8px;
+                        Text {
+                            text: "📷 POSE";
+                            color: #818cf8;
+                            font-size: 15px;
+                            font-weight: 800;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.current_shot + " / " + root.total_shots;
+                            color: Theme.text_primary;
+                            font-size: 18px;
+                            font-weight: 800;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // Instruction pill
+                Rectangle {
+                    width: 400px;
+                    height: 48px;
+                    border-radius: Theme.radius_pill;
+                    background: @linear-gradient(90deg, rgba(99, 102, 241, 0.2) 0%, rgba(236, 72, 153, 0.2) 100%);
+                    border-width: 1px;
+                    border-color: Theme.primary;
+
+                    Text {
+                        text: root.countdown_value > 0 ? "✨ BERSEDIA & SENYUM! ✨" : "SEDANG MERAKAM POSE...";
+                        color: Theme.text_primary;
+                        font-size: 15px;
+                        font-weight: 800;
+                        letter-spacing: 1px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Tip pill
+                Rectangle {
+                    width: 210px;
+                    height: 48px;
+                    border-radius: Theme.radius_pill;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 6px;
+                        Text {
+                            text: "💡 PANDUAN:";
+                            color: #a5b4fc;
+                            font-size: 12px;
+                            font-weight: 800;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "Kekal Di Kotak";
+                            color: Theme.text_secondary;
+                            font-size: 12px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            // Live View Camera Frame
+            Rectangle {
+                vertical-stretch: 1;
+                min-width: 0;
+                min-height: 0;
+                border-radius: Theme.radius_lg;
+                background: #000000;
+                border-width: 2px;
+                border-color: #1e293b;
+                clip: true;
+
+                // Live Camera Image (mirrored)
+                Image {
+                    width: 100%;
+                    height: 100%;
+                    source: root.live_view_image;
+                    image-fit: contain;
+                }
+
+                // Safe-Zone Portrait Framing Guide Box
+                Rectangle {
+                    width: parent.width > parent.height ? parent.height * 0.72 : parent.width * 0.72;
+                    height: parent.height * 0.82;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 24px;
+                    border-width: 2px;
+                    border-color: rgba(129, 140, 248, 0.45);
+                    background: transparent;
+
+                    // Guide Label
+                    Rectangle {
+                        y: 12px;
+                        width: 220px;
+                        height: 26px;
+                        x: (parent.width - self.width) / 2;
+                        border-radius: 13px;
+                        background: rgba(15, 23, 42, 0.75);
+                        border-width: 1px;
+                        border-color: rgba(129, 140, 248, 0.4);
+
+                        Text {
+                            text: "📸 SELARIKAN WAJAH DI SINI";
+                            color: #c7d2fe;
+                            font-size: 11px;
+                            font-weight: 800;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // Corner Viewfinder Brackets
+                // Top-left
+                Rectangle {
+                    x: 24px;
+                    y: 24px;
+                    width: 32px;
+                    height: 3px;
+                    background: #a5b4fc;
+                }
+                Rectangle {
+                    x: 24px;
+                    y: 24px;
+                    width: 3px;
+                    height: 32px;
+                    background: #a5b4fc;
+                }
+
+                // Top-right
+                Rectangle {
+                    x: parent.width - 56px;
+                    y: 24px;
+                    width: 32px;
+                    height: 3px;
+                    background: #a5b4fc;
+                }
+                Rectangle {
+                    x: parent.width - 27px;
+                    y: 24px;
+                    width: 3px;
+                    height: 32px;
+                    background: #a5b4fc;
+                }
+
+                // Bottom-left
+                Rectangle {
+                    x: 24px;
+                    y: parent.height - 27px;
+                    width: 32px;
+                    height: 3px;
+                    background: #a5b4fc;
+                }
+                Rectangle {
+                    x: 24px;
+                    y: parent.height - 56px;
+                    width: 3px;
+                    height: 32px;
+                    background: #a5b4fc;
+                }
+
+                // Bottom-right
+                Rectangle {
+                    x: parent.width - 56px;
+                    y: parent.height - 27px;
+                    width: 32px;
+                    height: 3px;
+                    background: #a5b4fc;
+                }
+                Rectangle {
+                    x: parent.width - 27px;
+                    y: parent.height - 56px;
+                    width: 3px;
+                    height: 32px;
+                    background: #a5b4fc;
+                }
+
+                // Large Countdown Overlay Pop
+                if root.countdown_value > 0 : Rectangle {
+                    width: 220px;
+                    height: 220px;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 110px;
+                    background: rgba(15, 23, 42, 0.85);
+                    border-width: 4px;
+                    border-color: Theme.accent_pink;
+
+                    Text {
+                        text: root.countdown_value;
+                        color: #ffffff;
+                        font-size: 100px;
+                        font-weight: 900;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            // Bottom Pose Timeline Tracker
+            HorizontalLayout {
+                height: 44px;
+                alignment: center;
+                spacing: 16px;
+
+                // Pose 1 Pill
+                Rectangle {
+                    width: 170px;
+                    height: 40px;
+                    border-radius: Theme.radius_pill;
+                    background: root.current_shot > 1 ? rgba(16, 185, 129, 0.2) : (root.current_shot == 1 ? rgba(99, 102, 241, 0.3) : rgba(30, 41, 59, 0.5));
+                    border-width: 1.5px;
+                    border-color: root.current_shot > 1 ? #10b981 : (root.current_shot == 1 ? #6366f1 : #334155);
+
+                    Text {
+                        text: root.current_shot > 1 ? "✅ Pose 1 Selesai" : (root.current_shot == 1 ? "📸 Pose 1 (Aktif)" : "⏳ Pose 1");
+                        color: root.current_shot >= 1 ? #ffffff : #64748b;
+                        font-size: 13px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Pose 2 Pill
+                Rectangle {
+                    width: 170px;
+                    height: 40px;
+                    border-radius: Theme.radius_pill;
+                    background: root.current_shot > 2 ? rgba(16, 185, 129, 0.2) : (root.current_shot == 2 ? rgba(99, 102, 241, 0.3) : rgba(30, 41, 59, 0.5));
+                    border-width: 1.5px;
+                    border-color: root.current_shot > 2 ? #10b981 : (root.current_shot == 2 ? #6366f1 : #334155);
+
+                    Text {
+                        text: root.current_shot > 2 ? "✅ Pose 2 Selesai" : (root.current_shot == 2 ? "📸 Pose 2 (Aktif)" : "⏳ Pose 2");
+                        color: root.current_shot >= 2 ? #ffffff : #64748b;
+                        font-size: 13px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Pose 3 Pill
+                Rectangle {
+                    width: 170px;
+                    height: 40px;
+                    border-radius: Theme.radius_pill;
+                    background: root.current_shot > 3 ? rgba(16, 185, 129, 0.2) : (root.current_shot == 3 ? rgba(99, 102, 241, 0.3) : rgba(30, 41, 59, 0.5));
+                    border-width: 1.5px;
+                    border-color: root.current_shot > 3 ? #10b981 : (root.current_shot == 3 ? #6366f1 : #334155);
+
+                    Text {
+                        text: root.current_shot > 3 ? "✅ Pose 3 Selesai" : (root.current_shot == 3 ? "📸 Pose 3 (Aktif)" : "⏳ Pose 3");
+                        color: root.current_shot >= 3 ? #ffffff : #64748b;
+                        font-size: 13px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}

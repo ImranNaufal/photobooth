@@ -1,0 +1,54 @@
+import { Theme } from "../theme.slint";
+
+export component AnimatedButton {
+    in property <string> text: "Button";
+    in property <bool> primary: true;
+    in property <bool> enabled: true;
+    in property <length> font_size: 20px;
+    in property <length> btn_width: 280px;
+    in property <length> btn_height: 64px;
+    in property <bool> pulse: false;
+
+    callback clicked();
+
+    width: root.btn_width;
+    height: root.btn_height;
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    container := Rectangle {
+        width: 100%;
+        height: 100%;
+        border-radius: Theme.radius_pill;
+        clip: true;
+
+        background: root.primary ? (
+            touch.pressed ? Theme.primary_hover_gradient :
+            (touch.has-hover ? Theme.primary_hover_gradient : Theme.primary_gradient)
+        ) : (
+            touch.pressed ? Theme.surface_light :
+            (touch.has-hover ? #253349 : Theme.surface)
+        );
+
+        border-width: root.primary ? 0px : 2px;
+        border-color: root.primary ? transparent : (touch.has-hover ? Theme.primary : Theme.border);
+
+        animate background { duration: 150ms; }
+        animate border-color { duration: 150ms; }
+
+        Text {
+            text: root.text;
+            color: root.enabled ? Theme.text_primary : Theme.text_muted;
+            font-size: root.font_size;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+

@@ -1,0 +1,64 @@
+[
+  {
+    "id": "default-4r-3pose",
+    "name": "4R Postcard (3 Poses)",
+    "canvas_width": 1800,
+    "canvas_height": 1200,
+    "overlay_png": "assets/templates/default_4r_overlay.png",
+    "is_strip_2x6": false,
+    "slots": [
+      {
+        "index": 0,
+        "x": 60,
+        "y": 60,
+        "width": 810,
+        "height": 1080
+      },
+      {
+        "index": 1,
+        "x": 930,
+        "y": 60,
+        "width": 810,
+        "height": 510
+      },
+      {
+        "index": 2,
+        "x": 930,
+        "y": 630,
+        "width": 810,
+        "height": 510
+      }
+    ]
+  },
+  {
+    "id": "default-2x6-strip",
+    "name": "2x6 Photo Strip (3 Poses - Auto Duplicate & Cut)",
+    "canvas_width": 1200,
+    "canvas_height": 1800,
+    "overlay_png": "assets/templates/default_strip_overlay.png",
+    "is_strip_2x6": true,
+    "slots": [
+      {
+        "index": 0,
+        "x": 50,
+        "y": 60,
+        "width": 500,
+        "height": 480
+      },
+      {
+        "index": 1,
+        "x": 50,
+        "y": 580,
+        "width": 500,
+        "height": 480
+      },
+      {
+        "index": 2,
+        "x": 50,
+        "y": 1100,
+        "width": 500,
+        "height": 480
+      }
+    ]
+  }
+]

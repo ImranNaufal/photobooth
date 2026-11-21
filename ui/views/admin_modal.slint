@@ -1,0 +1,654 @@
+import { Theme } from "../theme.slint";
+import { AnimatedButton } from "../components/animated_button.slint";
+
+export component AdminModal {
+    in property <bool> is_unlocked: false;
+    in property <bool> is_hardware_mode: false;
+    in property <string> active_template_id: "default-4r-3pose";
+    in property <string> printer_name: "DS-RX1";
+    in property <int> countdown_sec: 3;
+    in property <string> entered_pin: "";
+    in property <string> status_message: "";
+    in property <string> app_version: "v0.1.0";
+    in property <bool> is_checking_update: false;
+    in property <bool> update_available: false;
+    in property <string> update_version_string: "";
+    in property <string> update_status_text: "";
+    in property <float> update_progress: 0.0;
+
+    callback unlock_requested(string);
+    callback pin_digit_pressed(string);
+    callback pin_clear_pressed();
+    callback toggle_hardware_mode();
+    callback set_template(string);
+    callback change_countdown(int);
+    callback test_camera();
+    callback test_printer();
+    callback check_for_updates();
+    callback apply_update();
+    callback save_and_close();
+    callback close_admin();
+
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: rgba(10, 15, 29, 0.96);
+
+        // Header
+        HorizontalLayout {
+            y: 24px;
+            width: parent.width - 64px;
+            x: 32px;
+            height: 48px;
+            alignment: space-between;
+
+            Text {
+                text: "⚙️ Photobooth Administration Panel";
+                color: Theme.text_primary;
+                font-size: 24px;
+                font-weight: 800;
+                vertical-alignment: center;
+            }
+
+            Rectangle {
+                width: 120px;
+                height: 40px;
+                border-radius: Theme.radius_pill;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border;
+
+                TouchArea {
+                    clicked => { root.close_admin(); }
+                }
+
+                Text {
+                    text: "✕ Close";
+                    color: Theme.text_secondary;
+                    font-size: 15px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // Status banner if present
+        if root.status_message != "" : Rectangle {
+            y: 84px;
+            x: (parent.width - 600px) / 2;
+            width: 600px;
+            height: 40px;
+            border-radius: Theme.radius_sm;
+            background: rgba(99, 102, 241, 0.2);
+            border-width: 1px;
+            border-color: Theme.primary;
+
+            Text {
+                text: root.status_message;
+                color: #c7d2fe;
+                font-size: 14px;
+                font-weight: 600;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        // View 1: Locked - PIN Pad
+        if !root.is_unlocked : VerticalLayout {
+            alignment: center;
+            spacing: 24px;
+
+            Text {
+                text: "Enter Admin PIN (Default: 1234)";
+                color: Theme.text_secondary;
+                font-size: 18px;
+                horizontal-alignment: center;
+            }
+
+            // PIN Display Stars / Dots
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 260px;
+                    height: 56px;
+                    border-radius: Theme.radius_md;
+                    background: Theme.surface;
+                    border-width: 2px;
+                    border-color: Theme.primary;
+
+                    Text {
+                        text: root.entered_pin == "" ? "----" : root.entered_pin;
+                        color: Theme.text_primary;
+                        font-size: 28px;
+                        font-weight: 800;
+                        letter-spacing: 12px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            // 3x4 PIN Keypad Grid
+            VerticalLayout {
+                alignment: center;
+                spacing: 12px;
+
+                // Row 1: 1, 2, 3
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 12px;
+                    for d in ["1", "2", "3"]: Rectangle {
+                        width: 72px;
+                        height: 64px;
+                        border-radius: Theme.radius_md;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border;
+
+                        TouchArea {
+                            clicked => { root.pin_digit_pressed(d); }
+                        }
+                        Text {
+                            text: d;
+                            color: Theme.text_primary;
+                            font-size: 24px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // Row 2: 4, 5, 6
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 12px;
+                    for d in ["4", "5", "6"]: Rectangle {
+                        width: 72px;
+                        height: 64px;
+                        border-radius: Theme.radius_md;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border;
+
+                        TouchArea {
+                            clicked => { root.pin_digit_pressed(d); }
+                        }
+                        Text {
+                            text: d;
+                            color: Theme.text_primary;
+                            font-size: 24px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // Row 3: 7, 8, 9
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 12px;
+                    for d in ["7", "8", "9"]: Rectangle {
+                        width: 72px;
+                        height: 64px;
+                        border-radius: Theme.radius_md;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border;
+
+                        TouchArea {
+                            clicked => { root.pin_digit_pressed(d); }
+                        }
+                        Text {
+                            text: d;
+                            color: Theme.text_primary;
+                            font-size: 24px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // Row 4: Clear, 0, Enter
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 12px;
+
+                    Rectangle {
+                        width: 72px;
+                        height: 64px;
+                        border-radius: Theme.radius_md;
+                        background: #451a1a;
+                        border-width: 1px;
+                        border-color: Theme.error;
+
+                        TouchArea {
+                            clicked => { root.pin_clear_pressed(); }
+                        }
+                        Text {
+                            text: "CLR";
+                            color: #fca5a5;
+                            font-size: 16px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Rectangle {
+                        width: 72px;
+                        height: 64px;
+                        border-radius: Theme.radius_md;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border;
+
+                        TouchArea {
+                            clicked => { root.pin_digit_pressed("0"); }
+                        }
+                        Text {
+                            text: "0";
+                            color: Theme.text_primary;
+                            font-size: 24px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Rectangle {
+                        width: 72px;
+                        height: 64px;
+                        border-radius: Theme.radius_md;
+                        background: #064e3b;
+                        border-width: 1px;
+                        border-color: Theme.success;
+
+                        TouchArea {
+                            clicked => { root.unlock_requested(root.entered_pin); }
+                        }
+                        Text {
+                            text: "OK";
+                            color: #6ee7b7;
+                            font-size: 18px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+
+        // View 2: Unlocked - Hardware & Settings Configuration Panel
+        if root.is_unlocked : VerticalLayout {
+            y: 130px;
+            width: 800px;
+            x: (parent.width - self.width) / 2;
+            spacing: 20px;
+
+            // Setting 1: Hardware Mode Toggle
+            Rectangle {
+                height: 72px;
+                border-radius: Theme.radius_md;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border;
+
+                HorizontalLayout {
+                    padding: 16px;
+                    alignment: space-between;
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: "Operation Mode";
+                            color: Theme.text_primary;
+                            font-size: 17px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: root.is_hardware_mode ? "Hardware Mode (Canon EOS 700D + DNP DS-RX1HS)" : "Mock Mode (Simulated Camera & Disk Spool Print)";
+                            color: root.is_hardware_mode ? #38bdf8 : #a78bfa;
+                            font-size: 13px;
+                        }
+                    }
+
+                    Rectangle {
+                        width: 160px;
+                        height: 40px;
+                        border-radius: Theme.radius_pill;
+                        background: root.is_hardware_mode ? #0284c7 : #475569;
+
+                        TouchArea {
+                            clicked => { root.toggle_hardware_mode(); }
+                        }
+
+                        Text {
+                            text: root.is_hardware_mode ? "HARDWARE" : "MOCK DEV";
+                            color: #ffffff;
+                            font-size: 13px;
+                            font-weight: 800;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            // Setting 2: Active Template Selection
+            Rectangle {
+                height: 72px;
+                border-radius: Theme.radius_md;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border;
+
+                HorizontalLayout {
+                    padding: 16px;
+                    alignment: space-between;
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: "Print Template Layout";
+                            color: Theme.text_primary;
+                            font-size: 17px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: root.active_template_id == "default-4r-3pose" ? "Standard 4R Postcard (1800x1200)" : "2x6 Photo Strip (Auto Duplicate & Cut)";
+                            color: Theme.text_secondary;
+                            font-size: 13px;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Rectangle {
+                            width: 100px;
+                            height: 38px;
+                            border-radius: Theme.radius_pill;
+                            background: root.active_template_id == "default-4r-3pose" ? Theme.primary : Theme.surface_light;
+
+                            TouchArea {
+                                clicked => { root.set_template("default-4r-3pose"); }
+                            }
+                            Text {
+                                text: "4R 3-Pose";
+                                color: #ffffff;
+                                font-size: 12px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Rectangle {
+                            width: 110px;
+                            height: 38px;
+                            border-radius: Theme.radius_pill;
+                            background: root.active_template_id == "default-2x6-strip" ? Theme.primary : Theme.surface_light;
+
+                            TouchArea {
+                                clicked => { root.set_template("default-2x6-strip"); }
+                            }
+                            Text {
+                                text: "2x6 Strip Cut";
+                                color: #ffffff;
+                                font-size: 12px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Setting 3: Countdown Seconds
+            Rectangle {
+                height: 72px;
+                border-radius: Theme.radius_md;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border;
+
+                HorizontalLayout {
+                    padding: 16px;
+                    alignment: space-between;
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: "Capture Countdown";
+                            color: Theme.text_primary;
+                            font-size: 17px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: root.countdown_sec + " seconds between poses";
+                            color: Theme.text_secondary;
+                            font-size: 13px;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        for s in [3, 5, 7]: Rectangle {
+                            width: 50px;
+                            height: 38px;
+                            border-radius: Theme.radius_pill;
+                            background: root.countdown_sec == s ? Theme.primary : Theme.surface_light;
+
+                            TouchArea {
+                                clicked => { root.change_countdown(s); }
+                            }
+                            Text {
+                                text: s + "s";
+                                color: #ffffff;
+                                font-size: 13px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Hardware Diagnostics & Testing
+            Rectangle {
+                height: 72px;
+                border-radius: Theme.radius_md;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border;
+
+                HorizontalLayout {
+                    padding: 16px;
+                    alignment: space-between;
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: "Hardware Diagnostics";
+                            color: Theme.text_primary;
+                            font-size: 17px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: "Trigger test capture or print spool";
+                            color: Theme.text_secondary;
+                            font-size: 13px;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Rectangle {
+                            width: 130px;
+                            height: 38px;
+                            border-radius: Theme.radius_pill;
+                            background: #334155;
+                            border-width: 1px;
+                            border-color: #64748b;
+
+                            TouchArea {
+                                clicked => { root.test_camera(); }
+                            }
+                            Text {
+                                text: "📷 Test Camera";
+                                color: #f8fafc;
+                                font-size: 13px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Rectangle {
+                            width: 130px;
+                            height: 38px;
+                            border-radius: Theme.radius_pill;
+                            background: #334155;
+                            border-width: 1px;
+                            border-color: #64748b;
+
+                            TouchArea {
+                                clicked => { root.test_printer(); }
+                            }
+                            Text {
+                                text: "🖨️ Test Printer";
+                                color: #f8fafc;
+                                font-size: 13px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Setting 5: Software Version & Internet Auto-Update
+            Rectangle {
+                height: 72px;
+                border-radius: Theme.radius_md;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: root.update_available ? Theme.primary : Theme.border;
+
+                HorizontalLayout {
+                    padding: 16px;
+                    alignment: space-between;
+                    VerticalLayout {
+                        alignment: center;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text {
+                                text: "Software Version & Updates";
+                                color: Theme.text_primary;
+                                font-size: 17px;
+                                font-weight: 700;
+                            }
+                            Rectangle {
+                                width: 68px;
+                                height: 22px;
+                                border-radius: Theme.radius_pill;
+                                background: #1e293b;
+                                Text {
+                                    text: root.app_version;
+                                    color: #94a3b8;
+                                    font-size: 11px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                        Text {
+                            text: root.is_checking_update ? "Checking internet for latest release..." :
+                                  (root.update_available ? ("✨ New version " + root.update_version_string + " ready to install!") :
+                                  (root.update_status_text != "" ? root.update_status_text : "System is up to date."));
+                            color: root.update_available ? #38bdf8 : Theme.text_secondary;
+                            font-size: 13px;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 8px;
+
+                        if root.update_available : Rectangle {
+                            width: 190px;
+                            height: 40px;
+                            border-radius: Theme.radius_pill;
+                            background: root.update_progress > 0.0 ? #4f46e5 : #16a34a;
+
+                            TouchArea {
+                                clicked => { root.apply_update(); }
+                            }
+
+                            Text {
+                                text: root.update_progress > 0.0 ? ("Downloading... " + round(root.update_progress * 100) + "%") : "🚀 UPDATE & RESTART";
+                                color: #ffffff;
+                                font-size: 12px;
+                                font-weight: 800;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        if !root.update_available : Rectangle {
+                            width: 150px;
+                            height: 38px;
+                            border-radius: Theme.radius_pill;
+                            background: root.is_checking_update ? #334155 : Theme.surface_light;
+                            border-width: 1px;
+                            border-color: Theme.border;
+
+                            TouchArea {
+                                clicked => { root.check_for_updates(); }
+                            }
+
+                            Text {
+                                text: root.is_checking_update ? "Checking..." : "🔄 Check Updates";
+                                color: #f8fafc;
+                                font-size: 12px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Save & Exit Actions
+            HorizontalLayout {
+                spacing: 16px;
+                alignment: center;
+
+                AnimatedButton {
+                    text: "💾 SAVE & APPLY SETTINGS";
+                    btn_width: 380px;
+                    btn_height: 54px;
+                    font_size: 16px;
+                    primary: true;
+
+                    clicked => { root.save_and_close(); }
+                }
+
+                AnimatedButton {
+                    text: "EXIT WITHOUT SAVING";
+                    btn_width: 260px;
+                    btn_height: 54px;
+                    font_size: 16px;
+                    primary: false;
+
+                    clicked => { root.close_admin(); }
+                }
+            }
+        }
+    }
+}

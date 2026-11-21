@@ -1,0 +1,280 @@
+import { Theme } from "../theme.slint";
+import { AnimatedButton } from "../components/animated_button.slint";
+
+export component ResultView {
+    width: 100%;
+    height: 100%;
+
+    in property <image> composite_result_image;
+    in property <image> qr_code_image;
+    in property <string> status_message: "";
+    in property <int> auto_return_seconds: 15;
+
+    callback print_session();
+    callback finish_session();
+    callback retake_session();
+
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.background;
+
+        VerticalLayout {
+            padding-left: 28px;
+            padding-right: 28px;
+            padding-top: 20px;
+            padding-bottom: 20px;
+            spacing: 16px;
+
+            // Top Navigation & Step Indicator
+            HorizontalLayout {
+                height: 52px;
+                alignment: space-between;
+
+                // Step Journey Breadcrumbs
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: start;
+
+                    Rectangle {
+                        height: 44px;
+                        border-radius: Theme.radius_pill;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border;
+
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            spacing: 8px;
+                            alignment: center;
+                            Text {
+                                text: "1. SEMAK FOTO";
+                                color: #10b981;
+                                font-size: 13px;
+                                font-weight: 800;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: "➔";
+                                color: #475569;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: "2. IMBAS QR TELEFON";
+                                color: #818cf8;
+                                font-size: 13px;
+                                font-weight: 800;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: "➔";
+                                color: #475569;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: "3. CETAK / SELESAI";
+                                color: #f472b6;
+                                font-size: 13px;
+                                font-weight: 800;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
+                // Auto-return counter pill
+                Rectangle {
+                    width: 240px;
+                    height: 44px;
+                    border-radius: Theme.radius_pill;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 8px;
+                        Text {
+                            text: "⏱️ Auto-reset dalam:";
+                            color: Theme.text_muted;
+                            font-size: 13px;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.auto_return_seconds + " saat";
+                            color: #a5b4fc;
+                            font-size: 15px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            // Main Content Area: Photo Preview (Left) + Actions Hub (Right)
+            HorizontalLayout {
+                vertical-stretch: 1;
+                spacing: 24px;
+
+                // Left Column: Scaled Photo Showcase Frame
+                Rectangle {
+                    horizontal-stretch: 6;
+                    min-width: 0;
+                    min-height: 0;
+                    border-radius: Theme.radius_lg;
+                    background: #070a13;
+                    border-width: 2px;
+                    border-color: #1e293b;
+                    clip: true;
+
+                    // Centered constrained image that NEVER overflows
+                    Image {
+                        width: parent.width - 24px;
+                        height: parent.height - 24px;
+                        x: 12px;
+                        y: 12px;
+                        source: root.composite_result_image;
+                        image-fit: contain;
+                    }
+                }
+
+                // Right Column: Kiosk Action Hub Panel
+                Rectangle {
+                    horizontal-stretch: 4;
+                    min-width: 360px;
+                    max-width: 440px;
+                    border-radius: Theme.radius_lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+
+                    VerticalLayout {
+                        padding-left: 24px;
+                        padding-right: 24px;
+                        padding-top: 20px;
+                        padding-bottom: 20px;
+                        spacing: 16px;
+                        alignment: space-between;
+
+                        // QR Section
+                        VerticalLayout {
+                            spacing: 10px;
+                            alignment: center;
+
+                            Text {
+                                text: "📱 1. IMBAS UNTUK SIMPAN";
+                                color: #818cf8;
+                                font-size: 15px;
+                                font-weight: 800;
+                                letter-spacing: 0.5px;
+                                horizontal-alignment: center;
+                            }
+
+                            HorizontalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 170px;
+                                    height: 170px;
+                                    border-radius: Theme.radius_md;
+                                    background: #ffffff;
+
+                                    VerticalLayout {
+                                        padding: 8px;
+                                        Image {
+                                            width: 100%;
+                                            height: 100%;
+                                            source: root.qr_code_image;
+                                            image-fit: contain;
+                                        }
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: "Halakan kamera telefon ke Kod QR untuk muat turun foto resolusi asal terus ke galeri telefon anda.";
+                                color: Theme.text_secondary;
+                                font-size: 12px;
+                                horizontal-alignment: center;
+                                wrap: word-wrap;
+                            }
+                        }
+
+                        // Status message / print feedback
+                        if root.status_message != "" : Rectangle {
+                            height: 36px;
+                            border-radius: Theme.radius_sm;
+                            background: rgba(16, 185, 129, 0.15);
+                            border-width: 1px;
+                            border-color: Theme.success;
+
+                            Text {
+                                text: root.status_message;
+                                color: #34d399;
+                                font-size: 12px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        // Action Buttons Section
+                        VerticalLayout {
+                            spacing: 10px;
+
+                            Text {
+                                text: "🖨️ 2. PILIHAN CETAKAN & AKSI";
+                                color: Theme.text_muted;
+                                font-size: 12px;
+                                font-weight: 700;
+                                letter-spacing: 0.5px;
+                            }
+
+                            AnimatedButton {
+                                text: "🖨️ CETAK FOTO (PRINT 1 COPY)";
+                                btn_width: 360px;
+                                btn_height: 52px;
+                                font_size: 15px;
+                                primary: true;
+
+                                clicked => {
+                                    root.print_session();
+                                }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 10px;
+
+                                AnimatedButton {
+                                    text: "🔄 AMBIL SEMULA";
+                                    btn_width: 175px;
+                                    btn_height: 46px;
+                                    font_size: 13px;
+                                    primary: false;
+
+                                    clicked => {
+                                        root.retake_session();
+                                    }
+                                }
+
+                                AnimatedButton {
+                                    text: "✨ SELESAI";
+                                    btn_width: 175px;
+                                    btn_height: 46px;
+                                    font_size: 13px;
+                                    primary: false;
+
+                                    clicked => {
+                                        root.finish_session();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
