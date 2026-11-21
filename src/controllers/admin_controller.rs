@@ -175,7 +175,36 @@ impl AdminController {
         let window_weak = self.window.clone();
 
         tokio::spawn(async move {
-            let test_path = PathBuf::from("output").join("raw").join("test_capture.jpg");
+            let mut test_path = PathBuf::from("output").join("raw").join("test_capture.jpg");
+
+            // Look for the most recently captured photo in output/raw or output/composites
+            let search_dirs = [PathBuf::from("output").join("raw"), PathBuf::from("output").join("composites")];
+            let mut recent_files = Vec::new();
+
+            for dir in &search_dirs {
+                if let Ok(entries) = std::fs::read_dir(dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file() {
+                            if let Some(ext) = path.extension() {
+                                if ext.eq_ignore_ascii_case("jpg") || ext.eq_ignore_ascii_case("png") {
+                                    if let Ok(meta) = entry.metadata() {
+                                        if let Ok(mod_time) = meta.modified() {
+                                            recent_files.push((mod_time, path));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some((_, latest_path)) = recent_files.iter().max_by_key(|(time, _)| *time) {
+                test_path = latest_path.clone();
+                info!("Selected latest captured image for test print: {:?}", test_path);
+            }
+
             if !test_path.exists() {
                 // Generate a dummy test image if not exists
                 let mock = MockCamera::new();
@@ -183,16 +212,18 @@ impl AdminController {
             }
 
             let prn = printer_provider.read().await;
-            let spooler_status = prn.check_status(false).unwrap_or_else(|_| "Unknown".into());
-            info!("Printer spooler probe status: {}", spooler_status);
+            let filename = test_path
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| "photo.jpg".into());
 
             match prn.print_image(&test_path, false, 1) {
                 Ok(_) => {
-                    info!("Printer test dispatched successfully");
+                    info!("Printer test dispatched successfully: {:?}", test_path);
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(w) = window_weak.upgrade() {
                             w.set_status_message(
-                                format!("Printer OK! Spooler: {}", spooler_status).into(),
+                                format!("Print OK! Dispatched 1 sheet ({}) to DS-RX1", filename).into(),
                             );
                         }
                     });

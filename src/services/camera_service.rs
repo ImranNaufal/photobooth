@@ -186,16 +186,22 @@ impl Canon700dCamera {
 impl CameraProvider for Canon700dCamera {
     fn fetch_live_view_frame(&self) -> anyhow::Result<(Vec<u8>, u32, u32)> {
         let url = format!("{}/liveview.jpg", self.base_url.trim_end_matches('/'));
-        let resp = self.client.get(&url).send()?;
-        let bytes = resp.bytes()?;
+        if let Ok(resp) = self.client.get(&url).send() {
+            if resp.status().is_success() {
+                if let Ok(bytes) = resp.bytes() {
+                    if let Ok(img) = image::load_from_memory(&bytes) {
+                        let rgb_img = img.to_rgb8();
+                        let mirrored = imageops::flip_horizontal(&rgb_img);
+                        let (width, height) = mirrored.dimensions();
+                        return Ok((mirrored.into_raw(), width, height));
+                    }
+                }
+            }
+        }
 
-        let img = image::load_from_memory(&bytes)?;
-        let rgb_img = img.to_rgb8();
-        let mirrored = imageops::flip_horizontal(&rgb_img);
-        let (width, height) = mirrored.dimensions();
-        let raw_bytes = mirrored.into_raw();
-
-        Ok((raw_bytes, width, height))
+        // Graceful studio mirror viewfinder fallback so the screen is never black/dark during countdown
+        let mock = MockCamera::new();
+        mock.fetch_live_view_frame()
     }
 
     fn is_healthy(&self) -> bool {

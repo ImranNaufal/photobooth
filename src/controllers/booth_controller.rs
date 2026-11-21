@@ -31,6 +31,7 @@ pub struct BoothController {
     web_service: Arc<WebService>,
     active_session: Arc<TokioMutex<Option<ActiveSessionData>>>,
     is_session_running: Arc<AtomicBool>,
+    is_reviewing: Arc<AtomicBool>,
     timer_cancel_token: Arc<TokioMutex<Option<CancellationToken>>>,
 }
 
@@ -54,6 +55,7 @@ impl BoothController {
             web_service,
             active_session: Arc::new(TokioMutex::new(None)),
             is_session_running: Arc::new(AtomicBool::new(false)),
+            is_reviewing: Arc::new(AtomicBool::new(false)),
             timer_cancel_token: Arc::new(TokioMutex::new(None)),
         }
     }
@@ -62,10 +64,17 @@ impl BoothController {
     pub fn start_live_view_loop(&self) {
         let window_weak = self.window.clone();
         let camera_provider = self.camera_provider.clone();
+        let is_reviewing = self.is_reviewing.clone();
 
         tokio::spawn(async move {
             info!("Live View background loop started");
             loop {
+                // If currently reviewing a captured photo, hold that photo on screen and do not overwrite with live feed
+                if is_reviewing.load(Ordering::Relaxed) {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
+
                 // Query the window state safely from UI thread
                 let (should_stream, _) = {
                     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -146,6 +155,7 @@ impl BoothController {
         let print_controller = self.print_controller.clone();
         let active_session = self.active_session.clone();
         let is_running_flag = self.is_session_running.clone();
+        let is_reviewing = self.is_reviewing.clone();
         let web_service = self.web_service.clone();
         let timer_cancel_token = self.timer_cancel_token.clone();
 
@@ -192,6 +202,7 @@ impl BoothController {
             let mut captured_paths = Vec::new();
 
             for shot_idx in 1..=total_shots {
+                is_reviewing.store(false, Ordering::SeqCst);
                 let _ = slint::invoke_from_event_loop({
                     let window_weak = window_weak.clone();
                     move || {
@@ -235,7 +246,30 @@ impl BoothController {
                 let cam = camera_provider.read().await;
                 match cam.capture_photo(&shot_dest, shot_idx) {
                     Ok(path) => {
-                        captured_paths.push(path);
+                        captured_paths.push(path.clone());
+
+                        // Lock live stream loop so the captured photo stays visible on screen
+                        is_reviewing.store(true, Ordering::SeqCst);
+
+                        // Immediately display the real captured photo on screen for review
+                        if let Ok(img) = image::open(&path) {
+                            let preview_img = img.resize(1280, 853, image::imageops::FilterType::Triangle);
+                            let rgb = preview_img.to_rgb8();
+                            let (w_img, h_img) = rgb.dimensions();
+                            let raw_bytes = rgb.into_raw();
+
+                            let _ = slint::invoke_from_event_loop({
+                                let window_weak = window_weak.clone();
+                                move || {
+                                    if let Some(w) = window_weak.upgrade() {
+                                        let mut pixel_buffer = slint::SharedPixelBuffer::<slint::Rgb8Pixel>::new(w_img, h_img);
+                                        pixel_buffer.make_mut_bytes().copy_from_slice(&raw_bytes);
+                                        let slint_img = slint::Image::from_rgb8(pixel_buffer);
+                                        w.set_live_view_image(slint_img);
+                                    }
+                                }
+                            });
+                        }
                     }
                     Err(e) => {
                         error!("Failed to capture pose #{}: {:?}", shot_idx, e);
@@ -254,9 +288,11 @@ impl BoothController {
                     }
                 });
 
-                // Review pose freeze for 1000ms
-                tokio::time::sleep(Duration::from_millis(1000)).await;
+                // Review pose freeze for 1800ms so user clearly sees their face
+                tokio::time::sleep(Duration::from_millis(1800)).await;
             }
+
+            is_reviewing.store(false, Ordering::SeqCst);
 
             // Switch to Processing State
             let _ = slint::invoke_from_event_loop({

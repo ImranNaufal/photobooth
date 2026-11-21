@@ -3,12 +3,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 pub trait PrinterProvider: Send + Sync {
     fn print_image(&self, image_path: &Path, is_strip_2x6: bool, copies: u8) -> anyhow::Result<()>;
 
     /// Queries the printer spooler status (e.g. Ready, Offline, Paper Out / Jam)
+    #[allow(dead_code)]
     fn check_status(&self, _is_strip_2x6: bool) -> anyhow::Result<String> {
         Ok("Ready".to_string())
     }
@@ -79,24 +80,10 @@ impl DnpRx1hsPrinter {
             strip_preset_printer_name: strip_preset,
         }
     }
-
-    fn find_sumatra_pdf() -> Option<PathBuf> {
-        let candidates = [
-            PathBuf::from("SumatraPDF.exe"),
-            PathBuf::from(r"C:\Program Files\SumatraPDF\SumatraPDF.exe"),
-            PathBuf::from(r"C:\Program Files (x86)\SumatraPDF\SumatraPDF.exe"),
-        ];
-
-        for c in candidates {
-            if c.exists() {
-                return Some(c);
-            }
-        }
-        None
-    }
 }
 
 impl PrinterProvider for DnpRx1hsPrinter {
+    #[allow(dead_code)]
     fn check_status(&self, is_strip_2x6: bool) -> anyhow::Result<String> {
         let target_printer = if is_strip_2x6 {
             &self.strip_preset_printer_name
@@ -127,66 +114,87 @@ impl PrinterProvider for DnpRx1hsPrinter {
     }
 
     fn print_image(&self, image_path: &Path, is_strip_2x6: bool, copies: u8) -> anyhow::Result<()> {
+        let abs_path = if image_path.is_absolute() {
+            image_path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(image_path)
+        };
+
+        if !abs_path.exists() {
+            anyhow::bail!("Print image not found: {:?}", abs_path);
+        }
+
         let target_printer = if is_strip_2x6 {
             &self.strip_preset_printer_name
         } else {
             &self.default_printer_name
         };
 
-        // Query status first
-        let status = self.check_status(is_strip_2x6)?;
-        if status.contains("Offline") || status.contains("Error") {
-            anyhow::bail!("Printer '{}' is not ready: {}", target_printer, status);
-        }
-
         info!(
-            "Dispatching print job to target printer '{}' for image {:?}",
-            target_printer, image_path
+            "Dispatching print job to target printer '{}' (fallback '{}') for image {:?}",
+            target_printer, self.default_printer_name, abs_path
         );
 
-        let abs_path = fs::canonicalize(image_path)?;
-        let abs_str = abs_path.to_string_lossy().to_string();
-
+        let clean_path = abs_path.to_string_lossy().replace('/', "\\");
         let num_copies = copies.max(1);
 
-        // Option A: Use SumatraPDF if installed
-        if let Some(sumatra) = Self::find_sumatra_pdf() {
-            info!("Found SumatraPDF at {:?}. Executing silent print.", sumatra);
-            for _ in 0..num_copies {
-                let status = Command::new(&sumatra)
-                    .arg("-print-to")
-                    .arg(target_printer)
-                    .arg("-silent")
-                    .arg(&abs_str)
-                    .status()?;
+        // Native Windows .NET System.Drawing.Printing.PrintDocument
+        // Directly spools raw bitmap to DNP printer driver without relying on external viewers
+        let ps_script = format!(
+            r#"
+Add-Type -AssemblyName System.Drawing
+$target = '{target_printer}'
+$printers = Get-Printer | Select-Object -ExpandProperty Name
+if ($printers -notcontains $target) {{
+    $target = '{default_printer}'
+}}
+$img = [System.Drawing.Image]::FromFile('{clean_path}')
+for ($i = 0; $i -lt {num_copies}; $i++) {{
+    $pd = New-Object System.Drawing.Printing.PrintDocument
+    $pd.PrinterSettings.PrinterName = $target
+    $pd.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0, 0, 0, 0)
+    $pd.OriginAtMargins = $false
+    if ($img.Width -gt $img.Height) {{
+        $pd.DefaultPageSettings.Landscape = $true
+    }} else {{
+        $pd.DefaultPageSettings.Landscape = $false
+    }}
+    $pd.add_PrintPage({{
+        param($sender, $e)
+        $e.Graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $e.Graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+        $e.Graphics.DrawImage($img, $e.PageBounds)
+        $e.HasMorePages = $false
+    }})
+    $pd.Print()
+    $pd.Dispose()
+}}
+$img.Dispose()
+"#,
+            target_printer = target_printer,
+            default_printer = self.default_printer_name,
+            clean_path = clean_path,
+            num_copies = num_copies
+        );
 
-                if !status.success() {
-                    warn!("SumatraPDF exited with status: {:?}", status);
-                }
-            }
-            return Ok(());
-        }
-
-        // Option B: Native Windows PowerShell print verb fallback
-        info!("SumatraPDF not found. Using PowerShell PrintTo verb for silent printing.");
-        for _ in 0..num_copies {
-            let ps_cmd = format!(
-                "Start-Process -FilePath '{}' -Verb PrintTo -ArgumentList '\"{}\"' -WindowStyle Hidden",
-                abs_str, target_printer
-            );
-
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
             let output = Command::new("powershell")
-                .arg("-NoProfile")
-                .arg("-Command")
-                .arg(&ps_cmd)
+                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps_script])
+                .creation_flags(0x08000000) // CREATE_NO_WINDOW
                 .output()?;
 
             if !output.status.success() {
                 let err = String::from_utf8_lossy(&output.stderr);
-                error!("PowerShell print error: {}", err);
+                error!("Native print spooling error: {}", err);
+                anyhow::bail!("Print error: {}", err);
             }
         }
 
+        info!("Successfully sent print job to '{}'", target_printer);
         Ok(())
     }
 }
