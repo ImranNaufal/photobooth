@@ -447,6 +447,43 @@ Dokumen ini merekodkan sejarah setiap perbualan, keputusan seni bina, perubahan 
 
 ---
 
+## Log Sesi 16: 22 November 2026 (Penyelesaian Mock Camera vs Live Webcam, Pembaikan UTF-8 BOM Updater & Peningkatan Diagnostik)
+
+### 1. Masalah & Maklum Balas Pengguna
+* **Ujian Kamera Menghasilkan Imej Sintetik:**
+  Pengguna menjalankan "Test Camera" di PC kawan dan mendapati fail `test_capture.jpg` memaparkan corak sintetik (latar belakang biru dengan jalur hitam dan titik putih di tengah) serta notifikasi amaran `Camera captured (digiCamControl probe warning)`.
+* **Persoalan Pengguna:**
+  Pengguna bertanyakan:
+  1. Bagaimanakah cara melihat log untuk mengetahui sama ada ujian kamera berjaya dan data adalah betul?
+  2. Mengapakah imej yang ditangkap kelihatan sedemikian (`test_capture.jpg`)?
+  3. Mengapakah semakan auto-update kawan tidak mengesan kemas kini baharu?
+
+### 2. Punca Masalah (Root Cause Analysis)
+1. **Imej Ujian Adalah MockCamera Sintetik:**
+   Dalam `src/services/camera_service.rs`, fungsi `MockCamera::capture_photo(&self, dest_path, shot_index)` menghasilkan reka bentuk geometri tepat seperti gambar yang dimuat naik (biru RGB `[59, 130, 246]`, jalur tengah `[15, 23, 42]` dan titik putih).
+   Aplikasi jatuh balik (*fallback*) ke `MockCamera` kerana:
+   * Dalam Admin Panel, mod operasi masih ditetapkan kepada `MOCK DEV`.
+   * Pada pemacu `LaptopWebcamCamera`, permintaan resolusi `RequestedFormatType::AbsoluteHighestResolution` dengan format `RgbFormat` gagal dinegosiasikan pada beberapa pemacu USB/Media Foundation Windows, atau PC tersebut tidak mempunyai webcam fizikal tersambung.
+2. **Kemas Kini Tersekat Akibat Windows UTF-8 BOM:**
+   Skrip `Set-Content -Encoding UTF8` dalam PowerShell 5.1 menyertakan aksara *Byte Order Mark* (`\xEF\xBB\xBF` / `\u{feff}`) pada baris pertama fail `dist/version.json`. Penghurai JSON `serde_json` gagal menghuraikan teks bermula dengan BOM (`expected value at line 1, column 1`).
+3. **Mesej Status Admin Mengelirukan:**
+   Fungsi `handle_test_camera` sebelum ini meletakkan teks keras (*hardcoded*) `Camera captured (digiCamControl probe warning)` sekiranya `is_healthy` adalah palsu, walaupun pengguna sedang dalam mod webcam laptop.
+
+### 3. Tindakan Pembetulan & Peningkatan Yang Dilaksanakan
+1. **Penambahbaikan Pemacu Kamera (`LaptopWebcamCamera`):**
+   * Menambah pengesanan peranti automatik melalui `nokhwa::query(ApiBackend::Auto)` dengan log terperinci bilangan dan nama setiap peranti kamera yang disambungkan.
+   * Melaksanakan mekanisme dwi-cubaan: mencuba resolusi tertinggi (`AbsoluteHighestResolution`), dan sekiranya gagal, segera jatuh balik ke format lalai pemacu (`RequestedFormatType::None`).
+   * Menambah log jelas sekiranya tiada peranti kamera dikesan atau sekiranya berlaku kegagalan membaca bingkai imej.
+2. **Pembaikan Ralat BOM Pemproses Kemas Kini (`updater_service.rs` & `publish_release.ps1`):**
+   * Mengemas kini [src/services/updater_service.rs](file:///c:/Users/it-01995/Downloads/camera-ilhan/src/services/updater_service.rs) untuk menapis keluar aksara BOM menggunakan `.trim_start_matches('\u{feff}')` sebelum dihuraikan oleh `serde_json`.
+   * Mengubah [publish_release.ps1](file:///c:/Users/it-01995/Downloads/camera-ilhan/publish_release.ps1) untuk menulis fail `dist/version.json` menggunakan `[System.Text.UTF8Encoding]::new($false)` (UTF-8 tulen tanpa sebarang BOM).
+3. **Penyelarasan Mesej Status Admin (`admin_controller.rs`):**
+   * Menyelaraskan mesej status supaya membezakan dengan tepat antara imej perkakasan langsung (*Live Hardware/Webcam*) dan imej simulasi (*Simulated test photo*).
+4. **Penaikan Versi Rasmi ke `v0.2.0`:**
+   * Mengemas kini `Cargo.toml` dan `config.json` ke versi `0.2.0`.
+
+---
+
 ## Arahan Untuk Sesi Seterusnya (Next Session Guide)
 
 ### Cara Menjalankan Aplikasi

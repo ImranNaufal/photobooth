@@ -303,26 +303,67 @@ unsafe impl Sync for LaptopWebcamCamera {}
 
 impl LaptopWebcamCamera {
     pub fn new() -> Self {
-        let index = CameraIndex::Index(0);
-        let requested = RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestResolution);
-        let cam = match Camera::new(index, requested) {
-            Ok(mut c) => {
-                if let Err(e) = c.open_stream() {
-                    warn!("Failed to open laptop webcam stream: {:?}", e);
-                    None
-                } else {
-                    info!("Laptop webcam opened and streaming successfully");
-                    Some(c)
-                }
-            }
-            Err(e) => {
-                warn!("No laptop webcam available or failed to initialize: {:?}", e);
-                None
-            }
+        let devices = nokhwa::query(nokhwa::utils::ApiBackend::Auto).unwrap_or_default();
+        info!("LaptopWebcamCamera: Detected {} camera device(s)", devices.len());
+        for dev in &devices {
+            info!("  -> Found camera [{:?}]: {}", dev.index(), dev.human_name());
+        }
+
+        let indices_to_try: Vec<CameraIndex> = if devices.is_empty() {
+            vec![CameraIndex::Index(0)]
+        } else {
+            devices.iter().map(|d| d.index().clone()).collect()
         };
 
+        let mut opened_camera: Option<Camera> = None;
+
+        for idx in indices_to_try {
+            // Attempt 1: Absolute highest resolution
+            let req_high = RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestResolution);
+            let open_attempt = match Camera::new(idx.clone(), req_high) {
+                Ok(mut c) => match c.open_stream() {
+                    Ok(_) => {
+                        info!("Webcam {:?} streaming at highest resolution ({:?})", idx, c.resolution());
+                        Ok(c)
+                    }
+                    Err(e) => {
+                        warn!("Webcam {:?} failed to stream at high-res: {:?}. Retrying with default format...", idx, e);
+                        let req_def = RequestedFormat::new::<RgbFormat>(RequestedFormatType::None);
+                        Camera::new(idx.clone(), req_def).and_then(|mut c2| {
+                            c2.open_stream()?;
+                            info!("Webcam {:?} streaming at default resolution ({:?})", idx, c2.resolution());
+                            Ok(c2)
+                        })
+                    }
+                },
+                Err(e) => {
+                    warn!("Webcam {:?} high-res format not supported: {:?}. Retrying with default format...", idx, e);
+                    let req_def = RequestedFormat::new::<RgbFormat>(RequestedFormatType::None);
+                    Camera::new(idx.clone(), req_def).and_then(|mut c2| {
+                        c2.open_stream()?;
+                        info!("Webcam {:?} streaming at default resolution ({:?})", idx, c2.resolution());
+                        Ok(c2)
+                    })
+                }
+            };
+
+            match open_attempt {
+                Ok(cam) => {
+                    opened_camera = Some(cam);
+                    break;
+                }
+                Err(err) => {
+                    warn!("Failed to initialize camera {:?}: {:?}", idx, err);
+                }
+            }
+        }
+
+        if opened_camera.is_none() {
+            warn!("No working webcam found. Operating in fallback Mock mode.");
+        }
+
         Self {
-            camera: StdMutex::new(cam),
+            camera: StdMutex::new(opened_camera),
         }
     }
 }
@@ -353,17 +394,27 @@ impl CameraProvider for LaptopWebcamCamera {
     fn capture_photo(&self, dest_path: &Path, shot_index: u8) -> anyhow::Result<PathBuf> {
         let mut guard = self.camera.lock().unwrap();
         if let Some(cam) = guard.as_mut() {
-            if let Ok(frame) = cam.frame() {
-                if let Ok(rgb_img) = frame.decode_image::<RgbFormat>() {
-                    let mirrored = imageops::flip_horizontal(&rgb_img);
-                    if let Some(parent) = dest_path.parent() {
-                        fs::create_dir_all(parent)?;
+            match cam.frame() {
+                Ok(frame) => match frame.decode_image::<RgbFormat>() {
+                    Ok(rgb_img) => {
+                        let mirrored = imageops::flip_horizontal(&rgb_img);
+                        if let Some(parent) = dest_path.parent() {
+                            fs::create_dir_all(parent)?;
+                        }
+                        mirrored.save(dest_path)?;
+                        info!("Laptop webcam captured real frame for pose #{} to {:?}", shot_index, dest_path);
+                        return Ok(dest_path.to_path_buf());
                     }
-                    mirrored.save(dest_path)?;
-                    info!("Laptop webcam captured pose #{} to {:?}", shot_index, dest_path);
-                    return Ok(dest_path.to_path_buf());
+                    Err(e) => {
+                        warn!("Webcam frame decode error: {:?}. Falling back to mock capture...", e);
+                    }
+                },
+                Err(e) => {
+                    warn!("Webcam capture frame error: {:?}. Falling back to mock capture...", e);
                 }
             }
+        } else {
+            info!("No physical webcam active. Generating simulated photo #{}...", shot_index);
         }
         let mock = MockCamera::new();
         mock.capture_photo(dest_path, shot_index)

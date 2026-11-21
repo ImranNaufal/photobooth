@@ -69,10 +69,20 @@ impl UpdaterService {
             return Ok(None);
         }
 
-        let info: VersionInfo = match resp.json().await {
+        let text = match resp.text().await {
+            Ok(t) => t,
+            Err(e) => {
+                warn!("Failed to read update response text: {:?}", e);
+                return Ok(None);
+            }
+        };
+
+        // Strip UTF-8 BOM if present
+        let clean_text = text.trim_start_matches('\u{feff}');
+        let info: VersionInfo = match serde_json::from_str(clean_text) {
             Ok(v) => v,
             Err(e) => {
-                warn!("Failed to parse version.json: {:?}", e);
+                warn!("Failed to parse version.json: {:?} (payload: {})", e, clean_text);
                 return Ok(None);
             }
         };

@@ -16,6 +16,9 @@ booth_sessions.db*
 !/output/composites/.gitkeep
 !/output/mock_prints/.gitkeep
 
+# Runtime logs
+/logs/
+
 # User-specific runtime config
 config.json
 

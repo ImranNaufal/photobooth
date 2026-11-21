@@ -150,9 +150,9 @@ impl AdminController {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(w) = window_weak.upgrade() {
                             let msg = if healthy {
-                                "Camera capture test succeeded!".to_string()
+                                "Camera capture test succeeded (Live Hardware/Webcam)".to_string()
                             } else {
-                                "Camera captured (digiCamControl probe warning)".to_string()
+                                "Simulated test photo captured (Hardware/Webcam not connected)".to_string()
                             };
                             w.set_status_message(msg.into());
                         }

@@ -76,8 +76,9 @@ $versionJson = @{
 } | ConvertTo-Json -Depth 4
 
 $versionJsonPath = ".\dist\version.json"
-Set-Content -Path $versionJsonPath -Value $versionJson -Encoding UTF8
-Write-Host "    version.json berjaya dijana di: $versionJsonPath" -ForegroundColor Green
+$resolvedPath = if (Test-Path $versionJsonPath) { (Resolve-Path $versionJsonPath).Path } else { [System.IO.Path]::GetFullPath($versionJsonPath) }
+[System.IO.File]::WriteAllText($resolvedPath, $versionJson, [System.Text.UTF8Encoding]::new($false))
+Write-Host "    version.json berjaya dijana di: $versionJsonPath (UTF-8 No-BOM)" -ForegroundColor Green
 
 Write-Host "`n====================================================================" -ForegroundColor Green
 Write-Host "✨ PENERBITAN RELEASE SELESAI!" -ForegroundColor Green
