@@ -141,7 +141,7 @@ impl AdminController {
         let window_weak = self.window.clone();
 
         tokio::spawn(async move {
-            let test_path = PathBuf::from("output/raw/test_capture.jpg");
+            let test_path = PathBuf::from("output").join("raw").join("test_capture.jpg");
             let cam = camera_provider.read().await;
             let healthy = cam.is_healthy();
             match cam.capture_photo(&test_path, 1) {
@@ -175,7 +175,7 @@ impl AdminController {
         let window_weak = self.window.clone();
 
         tokio::spawn(async move {
-            let test_path = PathBuf::from("output/raw/test_capture.jpg");
+            let test_path = PathBuf::from("output").join("raw").join("test_capture.jpg");
             if !test_path.exists() {
                 // Generate a dummy test image if not exists
                 let mock = MockCamera::new();

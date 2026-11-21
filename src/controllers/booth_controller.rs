@@ -227,10 +227,9 @@ impl BoothController {
                     }
                 });
 
-                let shot_dest = PathBuf::from(format!(
-                    "output/raw/session_{}_pose_{}.jpg",
-                    session_id, shot_idx
-                ));
+                let shot_dest = PathBuf::from("output")
+                    .join("raw")
+                    .join(format!("session_{}_pose_{}.jpg", session_id, shot_idx));
 
                 // Non-blocking capture dispatch
                 let cam = camera_provider.read().await;

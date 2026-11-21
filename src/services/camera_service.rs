@@ -240,14 +240,26 @@ impl CameraProvider for Canon700dCamera {
 
         for cli in &possible_cli {
             if cli.exists() {
-                info!("Triggering Direct Canon Shutter via CLI: {:?} to {:?}", cli, abs_dest);
+                // Ensure no leftover or zombie CameraControlCmd processes hold the Canon USB device
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::process::CommandExt;
+                    let _ = std::process::Command::new("taskkill")
+                        .args(["/F", "/IM", "CameraControlCmd.exe"])
+                        .creation_flags(0x08000000)
+                        .status();
+                }
+
+                // Digicamcontrol requires strict Windows backslashes without mixed forward slashes
+                let clean_dest = abs_dest.to_string_lossy().replace('/', "\\");
+                info!("Triggering Direct Canon Shutter via CLI: {:?} to {:?}", cli, clean_dest);
 
                 // Remove previous file so we only accept fresh capture
                 let _ = fs::remove_file(&abs_dest);
 
                 let mut cmd = std::process::Command::new(cli);
-                let abs_str = abs_dest.to_string_lossy();
-                cmd.args(["/capture", "/filename", &abs_str]);
+                cmd.args(["/filename", &clean_dest, "/capture"]);
+                cmd.stdin(std::process::Stdio::null());
 
                 #[cfg(target_os = "windows")]
                 {
@@ -255,8 +267,17 @@ impl CameraProvider for Canon700dCamera {
                     cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
                 }
 
-                let status = cmd.status();
-                info!("CameraControlCmd status: {:?}", status);
+                if let Ok(mut child) = cmd.spawn() {
+                    let wait_start = Instant::now();
+                    while wait_start.elapsed() < Duration::from_secs(20) {
+                        if let Ok(Some(status)) = child.try_wait() {
+                            info!("CameraControlCmd finished: {:?}", status);
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(250));
+                    }
+                    let _ = child.kill();
+                }
 
                 if abs_dest.exists() {
                     let size = abs_dest.metadata().map(|m| m.len()).unwrap_or(0);

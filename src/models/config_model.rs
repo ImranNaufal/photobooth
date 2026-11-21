@@ -42,7 +42,7 @@ fn default_true() -> bool {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            hardware_mode: false,
+            hardware_mode: true,
             digicam_url: "http://127.0.0.1:5513".to_string(),
             printer_name: "DS-RX1".to_string(),
             printer_strip_preset_name: "DS-RX1-2x6".to_string(),
@@ -64,16 +64,19 @@ impl AppConfig {
         let path_ref = path.as_ref();
         if path_ref.exists() {
             match fs::read_to_string(path_ref) {
-                Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
-                    Ok(mut cfg) => {
-                        info!("Loaded configuration from {:?}", path_ref);
-                        cfg.app_version = APP_VERSION.to_string();
-                        return cfg;
+                Ok(content) => {
+                    let clean_content = content.trim_start_matches('\u{feff}');
+                    match serde_json::from_str::<AppConfig>(clean_content) {
+                        Ok(mut cfg) => {
+                            info!("Loaded configuration from {:?}", path_ref);
+                            cfg.app_version = APP_VERSION.to_string();
+                            return cfg;
+                        }
+                        Err(err) => {
+                            error!("Failed to parse config file: {:?}. Using defaults.", err);
+                        }
                     }
-                    Err(err) => {
-                        error!("Failed to parse config file: {:?}. Using defaults.", err);
-                    }
-                },
+                }
                 Err(err) => {
                     error!("Failed to read config file: {:?}. Using defaults.", err);
                 }
