@@ -51,6 +51,9 @@ namespace CanonBridge
             catch { }
         }
 
+        private static bool _lvDiagLogged = false;
+        private static int _lvErrorCount = 0;
+
         [STAThread]
         private static void Main(string[] args)
         {
@@ -101,7 +104,7 @@ namespace CanonBridge
             };
             timer.Start();
 
-            // Active EVF Live View polling timer on STA thread (~28 FPS while _wantLiveView is true)
+            // Active EVF Live View polling timer on STA thread (~28 FPS)
             var lvTimer = new System.Windows.Forms.Timer();
             lvTimer.Interval = 35;
             lvTimer.Tick += delegate
@@ -110,13 +113,29 @@ namespace CanonBridge
                 {
                     try
                     {
-                        if (!_camera.IsInLiveViewMode)
+                        if (!_camera.IsInHostLiveViewMode)
                         {
                             _camera.StartLiveView();
+                            if (!_camera.IsInHostLiveViewMode)
+                            {
+                                _camera.LiveViewDevice = EosLiveViewDevice.Host;
+                            }
                         }
-                        _camera.DownloadEvf();
+                        bool ok = _camera.DownloadEvf();
+                        if (!_lvDiagLogged)
+                        {
+                            _lvDiagLogged = true;
+                            Log("LV Poll diag: Device=" + _camera.LiveViewDevice + " IsInLV=" + _camera.IsInLiveViewMode + " IsHost=" + _camera.IsInHostLiveViewMode + " DownloadEvf=" + ok);
+                        }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        _lvErrorCount++;
+                        if (_lvErrorCount <= 5)
+                        {
+                            Log("LV Poll exception #" + _lvErrorCount + ": " + ex.Message);
+                        }
+                    }
                 }
             };
             lvTimer.Start();
@@ -214,9 +233,18 @@ namespace CanonBridge
                     return;
                 }
 
-                cam.IsErrorTolerantMode = true;
+                cam.IsErrorTolerantMode = false;
                 cam.EnsureOpenSession();
-                cam.SavePicturesToHost(_tempSaveDir);
+                try
+                {
+                    cam.SavePicturesToHost(_tempSaveDir);
+                    Log("SavePicturesToHost OK: " + _tempSaveDir);
+                }
+                catch (Exception spEx)
+                {
+                    Log("SavePicturesToHost WARN: " + spEx.Message);
+                }
+                cam.IsErrorTolerantMode = true;
                 cam.LiveViewUpdate += OnLiveViewUpdate;
                 cam.PictureTaken += OnPictureTaken;
                 cam.Error += OnCameraError;
@@ -492,11 +520,17 @@ namespace CanonBridge
                                     {
                                         if (_camera != null && !_captureInProgress)
                                         {
-                                            if (!_camera.IsInLiveViewMode) _camera.StartLiveView();
-                                            _camera.DownloadEvf();
+                                            if (!_camera.IsInHostLiveViewMode)
+                                            {
+                                                _camera.StartLiveView();
+                                                if (!_camera.IsInHostLiveViewMode)
+                                                    _camera.LiveViewDevice = EosLiveViewDevice.Host;
+                                            }
+                                            bool warmOk = _camera.DownloadEvf();
+                                            Log("Warmup LV: Device=" + _camera.LiveViewDevice + " IsHost=" + _camera.IsInHostLiveViewMode + " DownloadEvf=" + warmOk);
                                         }
                                     }
-                                    catch (Exception ex) { _lastError = ex.Message; }
+                                    catch (Exception ex) { _lastError = ex.Message; Log("Warmup LV ex: " + ex.Message); }
                                 });
                                 for (int w = 0; w < 25; w++)
                                 {
@@ -571,33 +605,50 @@ namespace CanonBridge
                             {
                                 try
                                 {
-                                    _camera.SavePicturesToHost(_tempSaveDir);
-                                    if (_camera.IsInLiveViewMode)
+                                    _camera.IsErrorTolerantMode = false;
+                                    try { _camera.SavePicturesToHost(_tempSaveDir); }
+                                    catch (Exception spEx) { Log("SavePicturesToHost before cap WARN: " + spEx.Message); }
+
+                                    if (_camera.IsInLiveViewMode || _camera.IsInHostLiveViewMode)
                                     {
-                                        try
-                                        {
-                                            _camera.TakePictureInLiveview();
-                                        }
-                                        catch
-                                        {
-                                            _camera.PauseLiveview();
-                                            _camera.TakePictureNoAf();
-                                        }
+                                        Log("Stopping LiveView before DSLR snap...");
+                                        _camera.StopLiveView();
+                                        _camera.IsInLiveViewMode = false;
+                                        Thread.Sleep(350);
                                     }
-                                    else
-                                    {
-                                        try { _camera.TakePicture(); }
-                                        catch { _camera.TakePictureNoAf(); }
-                                    }
+
+                                    Log("Triggering EDSDK TakePicture()...");
+                                    _camera.TakePicture();
+                                    _camera.IsErrorTolerantMode = true;
                                 }
                                 catch (Exception ex)
                                 {
+                                    try { _camera.IsErrorTolerantMode = true; } catch { }
                                     triggerErr = ex.Message;
+                                    Log("Capture trigger exception: " + triggerErr);
                                     _captureDone.Set();
                                 }
                             });
 
-                            bool signaled = _captureDone.Wait(15000);
+                            bool signaled = _captureDone.Wait(2500);
+                            if (!signaled || !File.Exists(dest))
+                            {
+                                Log("EDSDK callback did not complete in 2.5s; releasing session for CameraControlCmd.exe...");
+                                SafeStaInvoke(CleanupCamera);
+                                Thread.Sleep(200);
+                                string cliErr = RunDigiCamControlCli(dest);
+                                if (!string.IsNullOrEmpty(cliErr))
+                                {
+                                    triggerErr = cliErr;
+                                }
+                                else if (File.Exists(dest))
+                                {
+                                    signaled = true;
+                                    triggerErr = null;
+                                    _captureError = null;
+                                }
+                                SafeStaInvoke(TryConnectCamera);
+                            }
                             _captureInProgress = false;
 
                             if (_wantLiveView)
@@ -606,10 +657,12 @@ namespace CanonBridge
                                 {
                                     try
                                     {
-                                        if (_camera != null && !_camera.IsInLiveViewMode)
+                                        if (_camera != null && !_camera.IsInHostLiveViewMode)
+                                        {
                                             _camera.StartLiveView();
-                                        else if (_camera != null)
-                                            _camera.ResumeLiveview();
+                                            if (!_camera.IsInHostLiveViewMode)
+                                                _camera.LiveViewDevice = EosLiveViewDevice.Host;
+                                        }
                                     }
                                     catch { }
                                 });
@@ -649,6 +702,55 @@ namespace CanonBridge
                 }
             }
             catch { }
+        }
+
+        private static string RunDigiCamControlCli(string dest)
+        {
+            string[] clis = new string[]
+            {
+                @"C:\Program Files (x86)\digiCamControl\CameraControlCmd.exe",
+                @"C:\Program Files\digiCamControl\CameraControlCmd.exe",
+                "CameraControlCmd.exe"
+            };
+            string cli = null;
+            foreach (string c in clis)
+            {
+                if (File.Exists(c)) { cli = c; break; }
+            }
+            if (cli == null) return "CameraControlCmd.exe not found";
+
+            try
+            {
+                string parent = Path.GetDirectoryName(dest);
+                if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
+                if (File.Exists(dest)) File.Delete(dest);
+
+                var psi = new System.Diagnostics.ProcessStartInfo();
+                psi.FileName = cli;
+                psi.Arguments = "/filename \"" + dest.Replace('/', '\\') + "\" /capture";
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+
+                Log("Running CLI shutter: " + psi.Arguments);
+                using (var proc = System.Diagnostics.Process.Start(psi))
+                {
+                    if (!proc.WaitForExit(14000))
+                    {
+                        try { proc.Kill(); } catch { }
+                        return "CameraControlCmd.exe timed out";
+                    }
+                }
+                if (File.Exists(dest) && new FileInfo(dest).Length > 10000)
+                {
+                    Log("CLI captured DSLR photo (" + new FileInfo(dest).Length + " bytes) to " + dest);
+                    return null;
+                }
+                return "CLI finished without saving photo";
+            }
+            catch (Exception ex)
+            {
+                return ex.Message;
+            }
         }
 
         private static void ShutdownApp()
