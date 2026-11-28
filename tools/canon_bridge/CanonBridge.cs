@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -35,8 +36,20 @@ namespace CanonBridge
         private static bool _wantLiveView = false;
         private static string _tempSaveDir = Path.Combine(Path.GetTempPath(), "PhotoboothCanonTemp");
 
-        private static HttpListener _listener = null;
+        private static TcpListener _listener = null;
         private static volatile bool _running = true;
+
+        private static void Log(string msg)
+        {
+            try
+            {
+                string logDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs");
+                Directory.CreateDirectory(logDir);
+                string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " " + msg + Environment.NewLine;
+                File.AppendAllText(Path.Combine(logDir, "canon_bridge.log"), line);
+            }
+            catch { }
+        }
 
         [STAThread]
         private static void Main(string[] args)
@@ -58,6 +71,8 @@ namespace CanonBridge
                 }
             }
 
+            Log("Starting CanonBridge on port " + port + " (parentPid=" + parentPid + ")");
+
             // Invisible Win32 message-pump Control on the STA thread
             _staInvoker = new Control();
             IntPtr _forceHandle = _staInvoker.Handle;
@@ -71,6 +86,7 @@ namespace CanonBridge
             catch (Exception ex)
             {
                 _lastError = "Framework init error: " + ex.Message;
+                Log(_lastError);
             }
 
             // Reconnect / LiveView watchdog timer on STA thread
@@ -106,8 +122,8 @@ namespace CanonBridge
                 parentThread.Start();
             }
 
-            // Start HTTP listener thread
-            var httpThread = new Thread(delegate() { RunHttpServer(port); });
+            // Start direct TcpListener HTTP server (bypasses Windows http.sys completely)
+            var httpThread = new Thread(delegate() { RunTcpHttpServer(port); });
             httpThread.IsBackground = true;
             httpThread.Start();
 
@@ -193,6 +209,7 @@ namespace CanonBridge
                 _camera = cam;
                 _cameraModel = cam.DeviceDescription ?? "Canon EOS";
                 _lastError = "";
+                Log("Connected camera: " + _cameraModel);
 
                 if (_wantLiveView && !cam.IsInLiveViewMode)
                 {
@@ -298,12 +315,14 @@ namespace CanonBridge
                             }
                         }
                     }
+                    Log("Saved captured DSLR photo to: " + dest);
                 }
                 _captureError = null;
             }
             catch (Exception ex)
             {
                 _captureError = ex.Message;
+                Log("OnPictureTaken error: " + ex.Message);
             }
             finally
             {
@@ -317,25 +336,28 @@ namespace CanonBridge
             if (e != null && e.Exception != null)
             {
                 _lastError = e.Exception.Message;
+                Log("Camera error: " + _lastError);
             }
         }
 
         private static void OnCameraShutdown(object sender, EventArgs e)
         {
+            Log("Camera shutdown event received");
             CleanupCamera();
         }
 
-        private static void RunHttpServer(int port)
+        private static void RunTcpHttpServer(int port)
         {
             try
             {
-                _listener = new HttpListener();
-                _listener.Prefixes.Add("http://127.0.0.1:" + port + "/");
+                _listener = new TcpListener(IPAddress.Loopback, port);
                 _listener.Start();
+                Log("TcpListener HTTP server listening on 127.0.0.1:" + port);
             }
             catch (Exception ex)
             {
-                _lastError = "HttpListener start error: " + ex.Message;
+                _lastError = "TcpListener start error: " + ex.Message;
+                Log(_lastError);
                 return;
             }
 
@@ -343,11 +365,11 @@ namespace CanonBridge
             {
                 try
                 {
-                    HttpListenerContext ctx = _listener.GetContext();
+                    TcpClient client = _listener.AcceptTcpClient();
                     ThreadPool.QueueUserWorkItem(delegate(object state)
                     {
-                        HandleRequest((HttpListenerContext)state);
-                    }, ctx);
+                        HandleTcpClient((TcpClient)state);
+                    }, client);
                 }
                 catch
                 {
@@ -356,207 +378,244 @@ namespace CanonBridge
             }
         }
 
-        private static void HandleRequest(HttpListenerContext ctx)
+        private static Dictionary<string, string> ParseQuery(string queryString)
+        {
+            var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrEmpty(queryString)) return dict;
+            string[] pairs = queryString.Split('&');
+            foreach (string pair in pairs)
+            {
+                int eq = pair.IndexOf('=');
+                if (eq > 0)
+                {
+                    string k = Uri.UnescapeDataString(pair.Substring(0, eq).Replace('+', ' '));
+                    string v = Uri.UnescapeDataString(pair.Substring(eq + 1).Replace('+', ' '));
+                    dict[k] = v;
+                }
+            }
+            return dict;
+        }
+
+        private static void HandleTcpClient(TcpClient client)
         {
             try
             {
-                string path = ctx.Request.Url.AbsolutePath.ToLowerInvariant();
-                if (path == "/status")
+                client.ReceiveTimeout = 5000;
+                client.SendTimeout = 10000;
+                using (client)
+                using (NetworkStream stream = client.GetStream())
+                using (var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, true))
                 {
-                    bool connected = (_camera != null && _camera.IsSessionOpen);
-                    bool lvActive = (connected && _camera.IsInLiveViewMode);
-                    string json = string.Format(
-                        "{{\"connected\":{0},\"model\":\"{1}\",\"live_view\":{2},\"error\":\"{3}\"}}",
-                        connected ? "true" : "false",
-                        EscapeJson(_cameraModel),
-                        lvActive ? "true" : "false",
-                        EscapeJson(_lastError)
-                    );
-                    WriteText(ctx.Response, 200, "application/json", json);
-                }
-                else if (path == "/liveview.jpg")
-                {
-                    _wantLiveView = true;
-                    if (_camera == null || !_camera.IsSessionOpen)
-                    {
-                        SafeStaInvoke(TryConnectCamera);
-                    }
+                    string requestLine = reader.ReadLine();
+                    if (string.IsNullOrEmpty(requestLine)) return;
 
-                    if (_camera == null || !_camera.IsSessionOpen)
-                    {
-                        WriteText(ctx.Response, 503, "text/plain", "Camera not connected");
-                        return;
-                    }
+                    // Drain headers
+                    string headerLine;
+                    while (!string.IsNullOrEmpty(headerLine = reader.ReadLine())) { }
 
-                    if (!_camera.IsInLiveViewMode && !_captureInProgress)
-                    {
-                        SafeStaInvoke(delegate
-                        {
-                            try
-                            {
-                                if (_camera != null && !_camera.IsInLiveViewMode && !_captureInProgress)
-                                    _camera.StartLiveView();
-                            }
-                            catch (Exception ex) { _lastError = ex.Message; }
-                        });
-                        // Wait briefly for first frame
-                        for (int w = 0; w < 15; w++)
-                        {
-                            lock (_lvLock)
-                            {
-                                if (_latestLvJpeg != null && (DateTime.UtcNow - _latestLvUtc).TotalSeconds < 2.0)
-                                    break;
-                            }
-                            Thread.Sleep(50);
-                        }
-                    }
+                    string[] reqParts = requestLine.Split(' ');
+                    if (reqParts.Length < 2) return;
 
-                    byte[] frame = null;
-                    lock (_lvLock)
+                    string rawTarget = reqParts[1];
+                    string path = rawTarget;
+                    string queryStr = "";
+                    int qIdx = rawTarget.IndexOf('?');
+                    if (qIdx >= 0)
                     {
-                        if (_latestLvJpeg != null && (DateTime.UtcNow - _latestLvUtc).TotalSeconds < 3.0)
-                            frame = _latestLvJpeg;
+                        path = rawTarget.Substring(0, qIdx);
+                        queryStr = rawTarget.Substring(qIdx + 1);
                     }
+                    path = path.ToLowerInvariant();
+                    var query = ParseQuery(queryStr);
 
-                    if (frame != null && frame.Length > 0)
+                    if (path == "/status")
                     {
-                        ctx.Response.StatusCode = 200;
-                        ctx.Response.ContentType = "image/jpeg";
-                        ctx.Response.ContentLength64 = frame.Length;
-                        ctx.Response.OutputStream.Write(frame, 0, frame.Length);
-                        ctx.Response.OutputStream.Close();
+                        bool connected = (_camera != null && _camera.IsSessionOpen);
+                        bool lvActive = (connected && _camera.IsInLiveViewMode);
+                        string json = string.Format(
+                            "{{\"connected\":{0},\"model\":\"{1}\",\"live_view\":{2},\"error\":\"{3}\"}}",
+                            connected ? "true" : "false",
+                            EscapeJson(_cameraModel),
+                            lvActive ? "true" : "false",
+                            EscapeJson(_lastError)
+                        );
+                        WriteHttpBytes(stream, 200, "OK", "application/json", Encoding.UTF8.GetBytes(json));
                     }
-                    else
+                    else if (path == "/liveview.jpg")
                     {
-                        WriteText(ctx.Response, 503, "text/plain", "LiveView warming up");
-                    }
-                }
-                else if (path == "/liveview/stop")
-                {
-                    _wantLiveView = false;
-                    SafeStaInvoke(delegate
-                    {
-                        try
-                        {
-                            if (_camera != null && _camera.IsInLiveViewMode)
-                                _camera.StopLiveView();
-                        }
-                        catch { }
-                    });
-                    WriteText(ctx.Response, 200, "text/plain", "OK");
-                }
-                else if (path == "/capture")
-                {
-                    string dest = ctx.Request.QueryString["dest"];
-                    if (string.IsNullOrEmpty(dest))
-                    {
-                        WriteText(ctx.Response, 400, "text/plain", "Missing dest query param");
-                        return;
-                    }
-
-                    lock (_capLock)
-                    {
+                        _wantLiveView = true;
                         if (_camera == null || !_camera.IsSessionOpen)
                         {
                             SafeStaInvoke(TryConnectCamera);
                         }
+
                         if (_camera == null || !_camera.IsSessionOpen)
                         {
-                            WriteText(ctx.Response, 503, "text/plain", "Camera not connected");
+                            WriteHttpText(stream, 503, "Service Unavailable", "Camera not connected");
                             return;
                         }
 
-                        _captureInProgress = true;
-                        _captureTargetPath = dest;
-                        _captureError = null;
-                        _captureDone = new ManualResetEventSlim(false);
-
-                        string triggerErr = null;
-                        SafeStaInvoke(delegate
-                        {
-                            try
-                            {
-                                _camera.SavePicturesToHost(_tempSaveDir);
-                                if (_camera.IsInLiveViewMode)
-                                {
-                                    try
-                                    {
-                                        _camera.TakePictureInLiveview();
-                                    }
-                                    catch
-                                    {
-                                        _camera.PauseLiveview();
-                                        _camera.TakePictureNoAf();
-                                    }
-                                }
-                                else
-                                {
-                                    try { _camera.TakePicture(); }
-                                    catch { _camera.TakePictureNoAf(); }
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                triggerErr = ex.Message;
-                                _captureDone.Set();
-                            }
-                        });
-
-                        bool signaled = _captureDone.Wait(15000);
-                        _captureInProgress = false;
-
-                        // Resume LiveView for next pose if requested
-                        if (_wantLiveView)
+                        if (!_camera.IsInLiveViewMode && !_captureInProgress)
                         {
                             SafeStaInvoke(delegate
                             {
                                 try
                                 {
-                                    if (_camera != null && !_camera.IsInLiveViewMode)
+                                    if (_camera != null && !_camera.IsInLiveViewMode && !_captureInProgress)
                                         _camera.StartLiveView();
-                                    else if (_camera != null)
-                                        _camera.ResumeLiveview();
                                 }
-                                catch { }
+                                catch (Exception ex) { _lastError = ex.Message; }
                             });
+                            for (int w = 0; w < 15; w++)
+                            {
+                                lock (_lvLock)
+                                {
+                                    if (_latestLvJpeg != null && (DateTime.UtcNow - _latestLvUtc).TotalSeconds < 2.0)
+                                        break;
+                                }
+                                Thread.Sleep(50);
+                            }
                         }
 
-                        if (!signaled)
+                        byte[] frame = null;
+                        lock (_lvLock)
                         {
-                            WriteText(ctx.Response, 504, "text/plain", "Capture timeout waiting for DSLR");
+                            if (_latestLvJpeg != null && (DateTime.UtcNow - _latestLvUtc).TotalSeconds < 3.0)
+                                frame = _latestLvJpeg;
                         }
-                        else if (!string.IsNullOrEmpty(triggerErr))
+
+                        if (frame != null && frame.Length > 0)
                         {
-                            WriteText(ctx.Response, 500, "text/plain", triggerErr);
-                        }
-                        else if (!string.IsNullOrEmpty(_captureError))
-                        {
-                            WriteText(ctx.Response, 500, "text/plain", _captureError);
-                        }
-                        else if (File.Exists(dest))
-                        {
-                            WriteText(ctx.Response, 200, "text/plain", dest);
+                            WriteHttpBytes(stream, 200, "OK", "image/jpeg", frame);
                         }
                         else
                         {
-                            WriteText(ctx.Response, 500, "text/plain", "Photo file was not created");
+                            WriteHttpText(stream, 503, "Service Unavailable", "LiveView warming up");
                         }
                     }
-                }
-                else if (path == "/shutdown")
-                {
-                    WriteText(ctx.Response, 200, "text/plain", "Shutting down");
-                    ShutdownApp();
-                }
-                else
-                {
-                    WriteText(ctx.Response, 404, "text/plain", "Not Found");
+                    else if (path == "/liveview/stop")
+                    {
+                        _wantLiveView = false;
+                        SafeStaInvoke(delegate
+                        {
+                            try
+                            {
+                                if (_camera != null && _camera.IsInLiveViewMode)
+                                    _camera.StopLiveView();
+                            }
+                            catch { }
+                        });
+                        WriteHttpText(stream, 200, "OK", "OK");
+                    }
+                    else if (path == "/capture")
+                    {
+                        string dest = null;
+                        if (!query.TryGetValue("dest", out dest) || string.IsNullOrEmpty(dest))
+                        {
+                            WriteHttpText(stream, 400, "Bad Request", "Missing dest query param");
+                            return;
+                        }
+
+                        lock (_capLock)
+                        {
+                            if (_camera == null || !_camera.IsSessionOpen)
+                            {
+                                SafeStaInvoke(TryConnectCamera);
+                            }
+                            if (_camera == null || !_camera.IsSessionOpen)
+                            {
+                                WriteHttpText(stream, 503, "Service Unavailable", "Camera not connected");
+                                return;
+                            }
+
+                            _captureInProgress = true;
+                            _captureTargetPath = dest;
+                            _captureError = null;
+                            _captureDone = new ManualResetEventSlim(false);
+
+                            string triggerErr = null;
+                            SafeStaInvoke(delegate
+                            {
+                                try
+                                {
+                                    _camera.SavePicturesToHost(_tempSaveDir);
+                                    if (_camera.IsInLiveViewMode)
+                                    {
+                                        try
+                                        {
+                                            _camera.TakePictureInLiveview();
+                                        }
+                                        catch
+                                        {
+                                            _camera.PauseLiveview();
+                                            _camera.TakePictureNoAf();
+                                        }
+                                    }
+                                    else
+                                    {
+                                        try { _camera.TakePicture(); }
+                                        catch { _camera.TakePictureNoAf(); }
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    triggerErr = ex.Message;
+                                    _captureDone.Set();
+                                }
+                            });
+
+                            bool signaled = _captureDone.Wait(15000);
+                            _captureInProgress = false;
+
+                            if (_wantLiveView)
+                            {
+                                SafeStaInvoke(delegate
+                                {
+                                    try
+                                    {
+                                        if (_camera != null && !_camera.IsInLiveViewMode)
+                                            _camera.StartLiveView();
+                                        else if (_camera != null)
+                                            _camera.ResumeLiveview();
+                                    }
+                                    catch { }
+                                });
+                            }
+
+                            if (!signaled)
+                            {
+                                WriteHttpText(stream, 504, "Gateway Timeout", "Capture timeout waiting for DSLR");
+                            }
+                            else if (!string.IsNullOrEmpty(triggerErr))
+                            {
+                                WriteHttpText(stream, 500, "Internal Server Error", triggerErr);
+                            }
+                            else if (!string.IsNullOrEmpty(_captureError))
+                            {
+                                WriteHttpText(stream, 500, "Internal Server Error", _captureError);
+                            }
+                            else if (File.Exists(dest))
+                            {
+                                WriteHttpText(stream, 200, "OK", dest);
+                            }
+                            else
+                            {
+                                WriteHttpText(stream, 500, "Internal Server Error", "Photo file was not created");
+                            }
+                        }
+                    }
+                    else if (path == "/shutdown")
+                    {
+                        WriteHttpText(stream, 200, "OK", "Shutting down");
+                        ShutdownApp();
+                    }
+                    else
+                    {
+                        WriteHttpText(stream, 404, "Not Found", "Not Found");
+                    }
                 }
             }
-            catch (Exception ex)
-            {
-                try { WriteText(ctx.Response, 500, "text/plain", ex.Message); } catch { }
-            }
+            catch { }
         }
 
         private static void ShutdownApp()
@@ -572,14 +631,24 @@ namespace CanonBridge
             });
         }
 
-        private static void WriteText(HttpListenerResponse resp, int status, string contentType, string text)
+        private static void WriteHttpText(NetworkStream stream, int code, string reason, string text)
         {
-            byte[] buf = Encoding.UTF8.GetBytes(text ?? "");
-            resp.StatusCode = status;
-            resp.ContentType = contentType;
-            resp.ContentLength64 = buf.Length;
-            resp.OutputStream.Write(buf, 0, buf.Length);
-            resp.OutputStream.Close();
+            WriteHttpBytes(stream, code, reason, "text/plain; charset=utf-8", Encoding.UTF8.GetBytes(text ?? ""));
+        }
+
+        private static void WriteHttpBytes(NetworkStream stream, int code, string reason, string contentType, byte[] body)
+        {
+            string headers = string.Format(
+                "HTTP/1.1 {0} {1}\r\nContent-Type: {2}\r\nContent-Length: {3}\r\nConnection: close\r\n\r\n",
+                code, reason, contentType, body.Length
+            );
+            byte[] headerBytes = Encoding.ASCII.GetBytes(headers);
+            stream.Write(headerBytes, 0, headerBytes.Length);
+            if (body.Length > 0)
+            {
+                stream.Write(body, 0, body.Length);
+            }
+            stream.Flush();
         }
 
         private static string EscapeJson(string s)
