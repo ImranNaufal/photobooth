@@ -83,7 +83,10 @@ namespace CanonBridge
             try
             {
                 _framework = new EosFramework();
-                _framework.CameraAdded += delegate { SafeStaInvoke(TryConnectCamera); };
+                _framework.CameraAdded += delegate
+                {
+                    if (!_captureInProgress) SafeStaInvoke(TryConnectCamera);
+                };
                 TryConnectCamera();
             }
             catch (Exception ex)
@@ -92,11 +95,12 @@ namespace CanonBridge
                 Log(_lastError);
             }
 
-            // Reconnect watchdog timer on STA thread (1500ms)
+            // Reconnect watchdog timer on STA thread (1500ms) - NEVER reconnect during CLI capture!
             var timer = new System.Windows.Forms.Timer();
             timer.Interval = 1500;
             timer.Tick += delegate
             {
+                if (_captureInProgress) return;
                 if (_camera == null || !_camera.IsSessionOpen)
                 {
                     TryConnectCamera();
@@ -585,70 +589,38 @@ namespace CanonBridge
 
                         lock (_capLock)
                         {
-                            if (_camera == null || !_camera.IsSessionOpen)
-                            {
-                                SafeStaInvoke(TryConnectCamera);
-                            }
-                            if (_camera == null || !_camera.IsSessionOpen)
-                            {
-                                WriteHttpText(stream, 503, "Service Unavailable", "Camera not connected");
-                                return;
-                            }
-
                             _captureInProgress = true;
                             _captureTargetPath = dest;
                             _captureError = null;
                             _captureDone = new ManualResetEventSlim(false);
 
-                            string triggerErr = null;
+                            // Cleanly stop LiveView & release EDSDK session so CameraControlCmd.exe snaps reliably
                             SafeStaInvoke(delegate
                             {
                                 try
                                 {
-                                    _camera.IsErrorTolerantMode = false;
-                                    try { _camera.SavePicturesToHost(_tempSaveDir); }
-                                    catch (Exception spEx) { Log("SavePicturesToHost before cap WARN: " + spEx.Message); }
-
-                                    if (_camera.IsInLiveViewMode || _camera.IsInHostLiveViewMode)
+                                    if (_camera != null)
                                     {
-                                        Log("Stopping LiveView before DSLR snap...");
-                                        _camera.StopLiveView();
-                                        _camera.IsInLiveViewMode = false;
-                                        Thread.Sleep(350);
+                                        if (_camera.IsInLiveViewMode || _camera.IsInHostLiveViewMode)
+                                        {
+                                            Log("Stopping LiveView before DSLR snap...");
+                                            _camera.StopLiveView();
+                                            _camera.IsInLiveViewMode = false;
+                                            Thread.Sleep(250);
+                                        }
+                                        CleanupCamera();
                                     }
-
-                                    Log("Triggering EDSDK TakePicture()...");
-                                    _camera.TakePicture();
-                                    _camera.IsErrorTolerantMode = true;
                                 }
                                 catch (Exception ex)
                                 {
-                                    try { _camera.IsErrorTolerantMode = true; } catch { }
-                                    triggerErr = ex.Message;
-                                    Log("Capture trigger exception: " + triggerErr);
-                                    _captureDone.Set();
+                                    Log("Pre-capture cleanup WARN: " + ex.Message);
+                                    CleanupCamera();
                                 }
                             });
 
-                            bool signaled = _captureDone.Wait(2500);
-                            if (!signaled || !File.Exists(dest))
-                            {
-                                Log("EDSDK callback did not complete in 2.5s; releasing session for CameraControlCmd.exe...");
-                                SafeStaInvoke(CleanupCamera);
-                                Thread.Sleep(200);
-                                string cliErr = RunDigiCamControlCli(dest);
-                                if (!string.IsNullOrEmpty(cliErr))
-                                {
-                                    triggerErr = cliErr;
-                                }
-                                else if (File.Exists(dest))
-                                {
-                                    signaled = true;
-                                    triggerErr = null;
-                                    _captureError = null;
-                                }
-                                SafeStaInvoke(TryConnectCamera);
-                            }
+                            Thread.Sleep(200);
+                            string cliErr = RunDigiCamControlCli(dest);
+                            SafeStaInvoke(TryConnectCamera);
                             _captureInProgress = false;
 
                             if (_wantLiveView)
@@ -668,17 +640,9 @@ namespace CanonBridge
                                 });
                             }
 
-                            if (!signaled)
+                            if (!string.IsNullOrEmpty(cliErr))
                             {
-                                WriteHttpText(stream, 504, "Gateway Timeout", "Capture timeout waiting for DSLR");
-                            }
-                            else if (!string.IsNullOrEmpty(triggerErr))
-                            {
-                                WriteHttpText(stream, 500, "Internal Server Error", triggerErr);
-                            }
-                            else if (!string.IsNullOrEmpty(_captureError))
-                            {
-                                WriteHttpText(stream, 500, "Internal Server Error", _captureError);
+                                WriteHttpText(stream, 500, "Internal Server Error", cliErr);
                             }
                             else if (File.Exists(dest))
                             {
