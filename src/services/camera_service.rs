@@ -599,11 +599,10 @@ impl CameraProvider for LaptopWebcamCamera {
             match cam.frame() {
                 Ok(frame) => match frame.decode_image::<RgbFormat>() {
                     Ok(rgb_img) => {
-                        let mirrored = imageops::flip_horizontal(&rgb_img);
                         if let Some(parent) = dest_path.parent() {
                             fs::create_dir_all(parent)?;
                         }
-                        mirrored.save(dest_path)?;
+                        rgb_img.save(dest_path)?;
                         info!("Laptop webcam captured real frame for pose #{} to {:?}", shot_index, dest_path);
                         return Ok(dest_path.to_path_buf());
                     }

@@ -8,6 +8,7 @@ export component CaptureView {
     in property <int> countdown_value: 0;
     in property <int> current_shot: 1;
     in property <int> total_shots: 3;
+    in property <float> active_slot_aspect: 1.5;
     in property <string> status_message: "";
 
     Rectangle {
@@ -107,7 +108,7 @@ export component CaptureView {
             }
 
             // Live View Camera Frame
-            Rectangle {
+            viewfinder := Rectangle {
                 vertical-stretch: 1;
                 min-width: 0;
                 min-height: 0;
@@ -117,6 +118,20 @@ export component CaptureView {
                 border-color: #1e293b;
                 clip: true;
 
+                property <float> img_ratio: (root.live_view_image.width > 0 && root.live_view_image.height > 0)
+                    ? (root.live_view_image.width / root.live_view_image.height)
+                    : 1.5;
+                property <float> box_ratio: self.height > 0px ? (self.width / self.height) : 1.5;
+                property <length> rendered_w: self.box_ratio > self.img_ratio ? self.height * self.img_ratio : self.width;
+                property <length> rendered_h: self.box_ratio > self.img_ratio ? self.height : self.width / self.img_ratio;
+                property <length> rendered_x: (self.width - self.rendered_w) / 2;
+                property <length> rendered_y: (self.height - self.rendered_h) / 2;
+                property <float> target_ratio: root.active_slot_aspect > 0.2 ? root.active_slot_aspect : 1.5;
+                property <length> crop_w: self.img_ratio > self.target_ratio ? self.rendered_h * self.target_ratio : self.rendered_w;
+                property <length> crop_h: self.img_ratio > self.target_ratio ? self.rendered_h : self.rendered_w / self.target_ratio;
+                property <length> crop_x: (self.width - self.crop_w) / 2;
+                property <length> crop_y: (self.height - self.crop_h) / 2;
+
                 // Live Camera Image (mirrored)
                 Image {
                     width: 100%;
@@ -125,30 +140,64 @@ export component CaptureView {
                     image-fit: contain;
                 }
 
-                // Safe-Zone Portrait Framing Guide Box
+                // Subtle outer shade masks matching CompositorService center-crop
                 Rectangle {
-                    width: parent.width > parent.height ? parent.height * 0.72 : parent.width * 0.72;
-                    height: parent.height * 0.82;
+                    x: viewfinder.rendered_x;
+                    y: viewfinder.rendered_y;
+                    width: viewfinder.rendered_w;
+                    height: max(0px, viewfinder.crop_y - viewfinder.rendered_y);
+                    background: rgba(2, 6, 23, 0.58);
+                }
+                Rectangle {
+                    x: viewfinder.rendered_x;
+                    y: viewfinder.crop_y + viewfinder.crop_h;
+                    width: viewfinder.rendered_w;
+                    height: max(0px, (viewfinder.rendered_y + viewfinder.rendered_h) - (viewfinder.crop_y + viewfinder.crop_h));
+                    background: rgba(2, 6, 23, 0.58);
+                }
+                Rectangle {
+                    x: viewfinder.rendered_x;
+                    y: viewfinder.crop_y;
+                    width: max(0px, viewfinder.crop_x - viewfinder.rendered_x);
+                    height: viewfinder.crop_h;
+                    background: rgba(2, 6, 23, 0.58);
+                }
+                Rectangle {
+                    x: viewfinder.crop_x + viewfinder.crop_w;
+                    y: viewfinder.crop_y;
+                    width: max(0px, (viewfinder.rendered_x + viewfinder.rendered_w) - (viewfinder.crop_x + viewfinder.crop_w));
+                    height: viewfinder.crop_h;
+                    background: rgba(2, 6, 23, 0.58);
+                }
+
+                // Dynamic Active-Slot Framing Guide Box
+                Rectangle {
+                    width: max(120px, viewfinder.crop_w - 8px);
+                    height: max(120px, viewfinder.crop_h - 8px);
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
-                    border-radius: 24px;
+                    border-radius: 18px;
                     border-width: 2px;
-                    border-color: rgba(129, 140, 248, 0.45);
+                    border-color: rgba(129, 140, 248, 0.65);
                     background: transparent;
 
                     // Guide Label
                     Rectangle {
                         y: 12px;
-                        width: 220px;
+                        width: 260px;
                         height: 26px;
                         x: (parent.width - self.width) / 2;
                         border-radius: 13px;
-                        background: rgba(15, 23, 42, 0.75);
+                        background: rgba(15, 23, 42, 0.8);
                         border-width: 1px;
-                        border-color: rgba(129, 140, 248, 0.4);
+                        border-color: rgba(129, 140, 248, 0.45);
 
                         Text {
-                            text: "📸 ALIGN FACE HERE";
+                            text: root.active_slot_aspect < 0.95
+                                ? "📸 ALIGN FACE — PORTRAIT FRAME"
+                                : (root.active_slot_aspect <= 1.15
+                                    ? "📸 ALIGN FACE — SQUARE FRAME"
+                                    : "📸 ALIGN FACE — WIDE FRAME");
                             color: #c7d2fe;
                             font-size: 11px;
                             font-weight: 800;

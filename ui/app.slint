@@ -33,6 +33,7 @@ export component AppWindow inherits Window {
     in-out property <int> countdown_value: 0;
     in-out property <int> current_shot: 1;
     in-out property <int> total_shots: 3;
+    in-out property <float> active_slot_aspect: 1.5;
     in-out property <bool> flash_active: false;
     in-out property <string> status_message: "";
     in-out property <bool> is_hardware_mode: false;
@@ -101,6 +102,7 @@ export component AppWindow inherits Window {
         countdown_value: root.countdown_value;
         current_shot: root.current_shot;
         total_shots: root.total_shots;
+        active_slot_aspect: root.active_slot_aspect;
         status_message: root.status_message;
     }
 

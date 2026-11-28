@@ -179,6 +179,15 @@ impl BoothController {
             };
 
             let total_shots = template.slots.len() as u8;
+            let slot_aspect = |idx: u8| -> f32 {
+                template
+                    .slots
+                    .get(idx.saturating_sub(1) as usize)
+                    .filter(|s| s.height > 0)
+                    .map(|s| s.width as f32 / s.height as f32)
+                    .unwrap_or(1.5)
+            };
+            let first_aspect = slot_aspect(1);
 
             // Switch UI state to Capture
             let _ = slint::invoke_from_event_loop({
@@ -188,6 +197,7 @@ impl BoothController {
                         w.set_current_state(AppState::Capture);
                         w.set_current_shot(1);
                         w.set_total_shots(total_shots as i32);
+                        w.set_active_slot_aspect(first_aspect);
                         w.set_countdown_value(countdown_seconds as i32);
                         w.set_status_message("GET READY!".into());
                     }
@@ -201,11 +211,13 @@ impl BoothController {
 
             for shot_idx in 1..=total_shots {
                 is_reviewing.store(false, Ordering::SeqCst);
+                let current_aspect = slot_aspect(shot_idx);
                 let _ = slint::invoke_from_event_loop({
                     let window_weak = window_weak.clone();
                     move || {
                         if let Some(w) = window_weak.upgrade() {
                             w.set_current_shot(shot_idx as i32);
+                            w.set_active_slot_aspect(current_aspect);
                         }
                     }
                 });
@@ -255,12 +267,12 @@ impl BoothController {
                         AudioService::play_shutter_click();
                         is_reviewing.store(true, Ordering::SeqCst);
 
-                        // Immediately reveal captured photo underneath the flash fade
+                        // Immediately reveal captured photo mirrored cleanly (matching Live View) under flash fade
                         if let Ok(img) = image::open(&path) {
                             let preview_img = img.resize(1280, 853, image::imageops::FilterType::Triangle);
-                            let rgb = preview_img.to_rgb8();
-                            let (w_img, h_img) = rgb.dimensions();
-                            let raw_bytes = rgb.into_raw();
+                            let mirrored = image::imageops::flip_horizontal(&preview_img.to_rgb8());
+                            let (w_img, h_img) = mirrored.dimensions();
+                            let raw_bytes = mirrored.into_raw();
 
                             let _ = slint::invoke_from_event_loop({
                                 let window_weak = window_weak.clone();
