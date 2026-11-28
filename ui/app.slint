@@ -40,7 +40,7 @@ export component AppWindow inherits Window {
     in-out property <string> printer_name: "DS-RX1";
     in-out property <int> countdown_seconds_setting: 3;
     in-out property <int> auto_return_seconds: 25;
-    in-out property <bool> admin_unlocked: false;
+    in-out property <bool> admin_unlocked: true;
     in-out property <bool> allow_guest_layout_choice: true;
     in-out property <bool> auto_print_enabled: true;
     in-out property <bool> is_printing_busy: false;
@@ -88,7 +88,7 @@ export component AppWindow inherits Window {
         }
         open_admin => {
             root.admin_entered_pin = "";
-            root.admin_unlocked = false;
+            root.admin_unlocked = true;
             root.status_message = "";
             root.current_state = AppState.Admin;
         }
