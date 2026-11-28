@@ -20,6 +20,9 @@ pub trait CameraProvider: Send + Sync {
     fn is_healthy(&self) -> bool {
         true
     }
+
+    /// Optional hook to pause/stop live view between guest sessions
+    fn stop_live_view(&self) {}
 }
 
 /// MockCamera provides procedural animated RGB8 frames for testing without camera hardware
@@ -49,44 +52,43 @@ impl CameraProvider for MockCamera {
 
         let mut img: RgbImage = ImageBuffer::new(width, height);
 
-        // Animated color wave based on timestamp and coordinates
+        // Subtle dark studio gradient animation
         let t = (frame_num as f32 * 0.05).sin();
         let center_x = width / 2;
         let center_y = height / 2;
 
-        let r_base = ((t * 40.0) + 120.0).clamp(0.0, 255.0) as u8;
-        let g_base = 70u8;
-        let b_base = (((-t) * 40.0) + 140.0).clamp(0.0, 255.0) as u8;
+        let r_base = ((t * 10.0) + 28.0).clamp(0.0, 255.0) as u8;
+        let g_base = 24u8;
+        let b_base = (((-t) * 12.0) + 64.0).clamp(0.0, 255.0) as u8;
 
         for y in 0..height {
             let dy = (y as i32 - center_y as i32).abs() as u32;
             for x in 0..width {
                 let dx = (x as i32 - center_x as i32).abs() as u32;
 
-                // Subtle studio vignette
                 let dist = ((dx * dx + dy * dy) as f32).sqrt();
-                let vignette = (1.0 - (dist / 400.0)).clamp(0.25, 1.0);
+                let vignette = (1.0 - (dist / 420.0)).clamp(0.35, 1.0);
 
-                let r = ((r_base as f32 + (x as f32 / 10.0)) * vignette) as u8;
+                let r = ((r_base as f32 + (x as f32 / 48.0)) * vignette) as u8;
                 let g = (g_base as f32 * vignette) as u8;
-                let b = ((b_base as f32 + (y as f32 / 10.0)) * vignette) as u8;
+                let b = ((b_base as f32 + (y as f32 / 32.0)) * vignette) as u8;
 
                 img.put_pixel(x, y, Rgb([r, g, b]));
             }
         }
 
-        // Draw center crosshair
-        let cross_color = Rgb([255, 255, 255]);
-        for x in (center_x.saturating_sub(40))..=(center_x + 40).min(width - 1) {
+        // Draw subtle center crosshair
+        let cross_color = Rgb([148, 163, 184]);
+        for x in (center_x.saturating_sub(28))..=(center_x + 28).min(width - 1) {
             img.put_pixel(x, center_y, cross_color);
         }
-        for y in (center_y.saturating_sub(40))..=(center_y + 40).min(height - 1) {
+        for y in (center_y.saturating_sub(28))..=(center_y + 28).min(height - 1) {
             img.put_pixel(center_x, y, cross_color);
         }
 
-        // Draw animated scanning line
-        let scan_y = ((frame_num * 4) % (height as u64)) as u32;
-        let scan_color = Rgb([255, 215, 0]);
+        // Subtle studio indicator line
+        let scan_y = ((frame_num * 3) % (height as u64)) as u32;
+        let scan_color = Rgb([99, 102, 241]);
         for x in 0..width {
             img.put_pixel(x, scan_y, scan_color);
         }
@@ -166,25 +168,97 @@ impl CameraProvider for MockCamera {
     }
 }
 
-/// Canon700dCamera communicates via digiCamControl local REST / HTTP server
+/// Canon700dCamera communicates with embedded headless CanonBridge (EDSDK Live View + Capture)
+/// and falls back cleanly to CameraControlCmd.exe CLI if needed.
 pub struct Canon700dCamera {
     base_url: String,
     client: reqwest::blocking::Client,
+    capture_client: reqwest::blocking::Client,
+    fallback_mock: MockCamera,
+    bridge_spawn_lock: StdMutex<Option<Instant>>,
 }
 
 impl Canon700dCamera {
     pub fn new(base_url: String) -> Self {
         let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_millis(2500))
+            .timeout(Duration::from_millis(600))
             .build()
             .unwrap_or_default();
 
-        Self { base_url, client }
+        let capture_client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(18))
+            .build()
+            .unwrap_or_default();
+
+        let cam = Self {
+            base_url,
+            client,
+            capture_client,
+            fallback_mock: MockCamera::new(),
+            bridge_spawn_lock: StdMutex::new(None),
+        };
+        cam.ensure_bridge_running();
+        cam
+    }
+
+    fn find_bridge_exe() -> Option<PathBuf> {
+        let candidates = [
+            PathBuf::from("CanonBridge.exe"),
+            PathBuf::from(r"tools\canon_bridge\CanonBridge.exe"),
+        ];
+        candidates.into_iter().find(|p| p.exists())
+    }
+
+    fn ensure_bridge_running(&self) {
+        let status_url = format!("{}/status", self.base_url.trim_end_matches('/'));
+        if self.client.get(&status_url).send().is_ok() {
+            return;
+        }
+
+        let mut guard = match self.bridge_spawn_lock.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+
+        // Throttle spawn attempts to once every 5 seconds
+        if let Some(last) = *guard {
+            if last.elapsed() < Duration::from_secs(5) {
+                return;
+            }
+        }
+        *guard = Some(Instant::now());
+
+        if let Some(bridge_exe) = Self::find_bridge_exe() {
+            let pid_str = std::process::id().to_string();
+            info!("Starting headless CanonBridge EDSDK sidecar: {:?}", bridge_exe);
+            let mut cmd = std::process::Command::new(&bridge_exe);
+            cmd.args(["--port", "5513", "--parent-pid", &pid_str]);
+            cmd.stdin(std::process::Stdio::null());
+            cmd.stdout(std::process::Stdio::null());
+            cmd.stderr(std::process::Stdio::null());
+
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            }
+
+            if cmd.spawn().is_ok() {
+                for _ in 0..15 {
+                    std::thread::sleep(Duration::from_millis(120));
+                    if self.client.get(&status_url).send().is_ok() {
+                        info!("CanonBridge EDSDK HTTP sidecar is ready on {}", self.base_url);
+                        break;
+                    }
+                }
+            }
+        }
     }
 }
 
 impl CameraProvider for Canon700dCamera {
     fn fetch_live_view_frame(&self) -> anyhow::Result<(Vec<u8>, u32, u32)> {
+        self.ensure_bridge_running();
         let url = format!("{}/liveview.jpg", self.base_url.trim_end_matches('/'));
         if let Ok(resp) = self.client.get(&url).send() {
             if resp.status().is_success() {
@@ -199,12 +273,25 @@ impl CameraProvider for Canon700dCamera {
             }
         }
 
-        // Graceful studio mirror viewfinder fallback so the screen is never black/dark during countdown
-        let mock = MockCamera::new();
-        mock.fetch_live_view_frame()
+        // Graceful studio mirror viewfinder fallback if DSLR is turned off or unplugged
+        self.fallback_mock.fetch_live_view_frame()
+    }
+
+    fn stop_live_view(&self) {
+        let url = format!("{}/liveview/stop", self.base_url.trim_end_matches('/'));
+        let _ = self.client.get(&url).send();
     }
 
     fn is_healthy(&self) -> bool {
+        let status_url = format!("{}/status", self.base_url.trim_end_matches('/'));
+        if let Ok(resp) = self.client.get(&status_url).send() {
+            if let Ok(text) = resp.text() {
+                if text.contains("\"connected\":true") {
+                    return true;
+                }
+            }
+        }
+
         let possible_cli = [
             Path::new(r"C:\Program Files (x86)\digiCamControl\CameraControlCmd.exe"),
             Path::new(r"C:\Program Files\digiCamControl\CameraControlCmd.exe"),
@@ -214,10 +301,7 @@ impl CameraProvider for Canon700dCamera {
             return true;
         }
 
-        let test_url = format!("{}/liveview.jpg", self.base_url.trim_end_matches('/'));
-        self.client.head(&test_url).send().map_or(false, |r| {
-            r.status().is_success() || r.status().as_u16() == 404
-        })
+        false
     }
 
     fn capture_photo(&self, dest_path: &Path, shot_index: u8) -> anyhow::Result<PathBuf> {
@@ -236,8 +320,35 @@ impl CameraProvider for Canon700dCamera {
             let _ = fs::create_dir_all(parent);
         }
 
-        // 1. Direct Headless CLI Shutter (CameraControlCmd.exe)
-        // Auto-connects directly to Canon DSLR over USB without needing GUI or web server!
+        let clean_dest = abs_dest.to_string_lossy().replace('/', "\\");
+        let _ = fs::remove_file(&abs_dest);
+
+        // 1. Primary: Unified CanonBridge EDSDK capture (same session as Live View, <1s, zero USB lock!)
+        self.ensure_bridge_running();
+        let bridge_capture_url = format!("{}/capture", self.base_url.trim_end_matches('/'));
+        if let Ok(resp) = self
+            .capture_client
+            .get(&bridge_capture_url)
+            .query(&[("dest", clean_dest.as_str())])
+            .send()
+        {
+            if resp.status().is_success() && abs_dest.exists() {
+                let size = abs_dest.metadata().map(|m| m.len()).unwrap_or(0);
+                if size > 10_000 {
+                    info!(
+                        "CanonBridge EDSDK captured high-res DSLR photo ({} bytes) for pose #{} to {:?}",
+                        size, shot_index, abs_dest
+                    );
+                    return Ok(abs_dest);
+                }
+            } else {
+                let status = resp.status();
+                let body = resp.text().unwrap_or_default();
+                warn!("CanonBridge /capture returned {}: {}", status, body);
+            }
+        }
+
+        // 2. Fallback: Direct Headless CLI Shutter (CameraControlCmd.exe) only if bridge isn't available
         let possible_cli = [
             PathBuf::from(r"C:\Program Files (x86)\digiCamControl\CameraControlCmd.exe"),
             PathBuf::from(r"C:\Program Files\digiCamControl\CameraControlCmd.exe"),
@@ -257,8 +368,7 @@ impl CameraProvider for Canon700dCamera {
                 }
 
                 // Digicamcontrol requires strict Windows backslashes without mixed forward slashes
-                let clean_dest = abs_dest.to_string_lossy().replace('/', "\\");
-                info!("Triggering Direct Canon Shutter via CLI: {:?} to {:?}", cli, clean_dest);
+                info!("Triggering Direct Canon Shutter via CLI fallback: {:?} to {:?}", cli, clean_dest);
 
                 // Remove previous file so we only accept fresh capture
                 let _ = fs::remove_file(&abs_dest);

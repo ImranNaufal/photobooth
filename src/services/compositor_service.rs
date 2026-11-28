@@ -81,8 +81,17 @@ impl CompositorService {
                             imageops::FilterType::Triangle,
                         );
 
-                        // Overlay onto canvas
+                        // Overlay onto left slot (and duplicate onto right half BEFORE overlay PNG for 2x6 strips)
                         imageops::overlay(&mut canvas, &resized, slot.x as i64, slot.y as i64);
+                        if template.is_strip_2x6 && canvas_w >= 1200 {
+                            let half_w = canvas_w / 2;
+                            imageops::overlay(
+                                &mut canvas,
+                                &resized,
+                                (slot.x + half_w) as i64,
+                                slot.y as i64,
+                            );
+                        }
                     }
                     Err(e) => {
                         error!("Failed to open photo at {:?}: {:?}", photo_path, e);
@@ -91,7 +100,7 @@ impl CompositorService {
             }
         }
 
-        // 3. Alpha-blend template overlay PNG on top
+        // 3. Alpha-blend template overlay PNG on top (preserves crisp center cut-line on 2x6)
         let overlay_path = Path::new(&template.overlay_png);
         if overlay_path.exists() {
             match image::open(overlay_path) {
@@ -102,18 +111,6 @@ impl CompositorService {
                 }
                 Err(e) => {
                     warn!("Failed to load overlay PNG {:?}: {:?}", overlay_path, e);
-                }
-            }
-        }
-
-        // 4. If 2x6 strip, duplicate left half [0..600, 0..1800] to right half [600..1200, 0..1800]
-        if template.is_strip_2x6 && canvas_w >= 1200 {
-            info!("Duplicating left strip (0..600) to right strip (600..1200)");
-            let half_w = canvas_w / 2;
-            for y in 0..canvas_h {
-                for x in 0..half_w {
-                    let p = *canvas.get_pixel(x, y);
-                    canvas.put_pixel(x + half_w, y, p);
                 }
             }
         }

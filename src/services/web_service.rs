@@ -57,7 +57,9 @@ impl WebService {
                 .route("/api/logs", get(handle_logs_api))
                 .route("/s/:id", get(handle_share_page))
                 .route("/photo/:id", get(handle_photo))
-                .route("/download/:id", get(handle_download));
+                .route("/download/:id", get(handle_download))
+                .route("/raw/:id/:pose", get(handle_raw_photo))
+                .route("/raw_download/:id/:pose", get(handle_raw_download));
 
             let addr = SocketAddr::from(([0, 0, 0, 0], port));
             info!("Starting Photobooth Web Server on http://0.0.0.0:{}", port);
@@ -110,6 +112,34 @@ async fn handle_share_page(Path(id): Path<String>) -> Html<String> {
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
         .collect();
 
+    // Check which raw pose files exist for this session
+    let mut raw_cards = String::new();
+    for pose in 1..=3u8 {
+        let raw_path = PathBuf::from("output/raw").join(format!("session_{}_pose_{}.jpg", sanitized_id, pose));
+        if raw_path.exists() {
+            raw_cards.push_str(&format!(
+                r#"<div class="raw-card">
+                    <img src="/raw/{id}/{pose}" alt="Pose {pose}" loading="lazy">
+                    <a href="/raw_download/{id}/{pose}" class="btn-sm" download="pose_{pose}_{id}.jpg">⬇ Pose {pose}</a>
+                </div>"#,
+                id = sanitized_id,
+                pose = pose
+            ));
+        }
+    }
+
+    let raw_section = if raw_cards.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"<div class="raw-section">
+                <h2>Individual Shots</h2>
+                <div class="raw-grid">{cards}</div>
+            </div>"#,
+            cards = raw_cards
+        )
+    };
+
     let html = format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -153,7 +183,7 @@ async fn handle_share_page(Path(id): Path<String>) -> Html<String> {
             border-radius: 16px;
             overflow: hidden;
             background: #0B0F19;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
             border: 2px solid #334155;
         }}
         .preview-wrapper img {{
@@ -175,6 +205,50 @@ async fn handle_share_page(Path(id): Path<String>) -> Html<String> {
             transition: transform 0.15s ease, opacity 0.15s ease;
         }}
         .btn:active {{ transform: scale(0.98); opacity: 0.9; }}
+        .raw-section {{
+            margin-top: 24px;
+            padding-top: 20px;
+            border-top: 1px solid #334155;
+            text-align: left;
+        }}
+        .raw-section h2 {{
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #94A3B8;
+            margin-bottom: 12px;
+            text-align: center;
+        }}
+        .raw-grid {{
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+        }}
+        .raw-card {{
+            background: #0F172A;
+            border-radius: 12px;
+            padding: 6px;
+            border: 1px solid #334155;
+            text-align: center;
+        }}
+        .raw-card img {{
+            width: 100%;
+            height: 80px;
+            object-fit: cover;
+            border-radius: 8px;
+            margin-bottom: 6px;
+            display: block;
+        }}
+        .btn-sm {{
+            display: block;
+            padding: 6px 4px;
+            font-size: 11px;
+            font-weight: 700;
+            color: #E2E8F0;
+            background: #334155;
+            border-radius: 8px;
+            text-decoration: none;
+        }}
         .footer {{
             margin-top: 20px;
             color: #64748B;
@@ -186,24 +260,79 @@ async fn handle_share_page(Path(id): Path<String>) -> Html<String> {
     <div class="container">
         <div class="header">
             <h1>✨ YOUR PHOTO IS READY! ✨</h1>
-            <p>Save it directly to your camera roll</p>
+            <p>Save your print composite or individual DSLR shots below</p>
         </div>
         <div class="preview-wrapper">
             <img src="/photo/{id}" alt="Photobooth Composite Photo" loading="lazy">
         </div>
         <a href="/download/{id}" class="btn" download="photobooth_{id}.jpg">
-            📥 Save High-Res Photo
+            📥 Save Composite Photo
         </a>
+        {raw_section}
         <div class="footer">
             Photobooth RS &bull; 300 DPI Original Quality
         </div>
     </div>
 </body>
 </html>"#,
-        id = sanitized_id
+        id = sanitized_id,
+        raw_section = raw_section
     );
 
     Html(html)
+}
+
+async fn handle_raw_photo(Path((id, pose)): Path<(String, String)>) -> Result<Response<Body>, StatusCode> {
+    let sanitized_id: String = id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    if !matches!(pose.as_str(), "1" | "2" | "3") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let path = PathBuf::from("output/raw").join(format!("session_{}_pose_{}.jpg", sanitized_id, pose));
+    if !path.exists() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    match fs::read(&path).await {
+        Ok(data) => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "image/jpeg")
+            .header(header::CACHE_CONTROL, "public, max-age=86400")
+            .body(Body::from(data))
+            .unwrap()),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+async fn handle_raw_download(Path((id, pose)): Path<(String, String)>) -> Result<Response<Body>, StatusCode> {
+    let sanitized_id: String = id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    if !matches!(pose.as_str(), "1" | "2" | "3") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let path = PathBuf::from("output/raw").join(format!("session_{}_pose_{}.jpg", sanitized_id, pose));
+    if !path.exists() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    match fs::read(&path).await {
+        Ok(data) => {
+            let filename = format!("attachment; filename=\"pose_{}_{}.jpg\"", pose, sanitized_id);
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "image/jpeg")
+                .header(header::CONTENT_DISPOSITION, filename)
+                .body(Body::from(data))
+                .unwrap())
+        }
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }
 
 async fn handle_photo(Path(id): Path<String>) -> Result<Response<Body>, StatusCode> {

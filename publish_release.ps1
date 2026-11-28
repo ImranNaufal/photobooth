@@ -51,6 +51,12 @@ New-Item -ItemType Directory -Path "$distDir\output\composites" -Force | Out-Nul
 New-Item -ItemType Directory -Path "$distDir\output\mock_prints" -Force | Out-Null
 
 Copy-Item $releaseExe "$distDir\Photobooth-RS.exe"
+$cscPath = "C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+if ((Test-Path $cscPath) -and (Test-Path ".\tools\canon_bridge\CanonBridge.cs") -and (Test-Path ".\tools\canon_bridge\lib\Canon.Eos.Framework.dll")) {
+    Write-Host "    Mengkompilasi CanonBridge.exe (x86 EDSDK Live View)..." -ForegroundColor Cyan
+    & $cscPath /nologo /target:winexe /platform:x86 /optimize+ /out:"$distDir\CanonBridge.exe" /reference:".\tools\canon_bridge\lib\Canon.Eos.Framework.dll" ".\tools\canon_bridge\CanonBridge.cs"
+    Copy-Item ".\tools\canon_bridge\lib\*.dll" "$distDir\" -Force
+}
 Copy-Item ".\assets\templates\*" "$distDir\assets\templates\" -Recurse
 Copy-Item ".\assets\icons\app_icon.ico" "$distDir\assets\icons\"
 if (Test-Path ".\config.json") { Copy-Item ".\config.json" "$distDir\config.json" }

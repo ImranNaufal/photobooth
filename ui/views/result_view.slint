@@ -8,7 +8,9 @@ export component ResultView {
     in property <image> composite_result_image;
     in property <image> qr_code_image;
     in property <string> status_message: "";
-    in property <int> auto_return_seconds: 15;
+    in property <int> auto_return_seconds: 25;
+    in property <bool> is_printing_busy: false;
+    in property <bool> auto_print_enabled: true;
 
     callback print_session();
     callback finish_session();
@@ -49,7 +51,7 @@ export component ResultView {
                             spacing: 8px;
                             alignment: center;
                             Text {
-                                text: "1. SEMAK FOTO";
+                                text: "1. REVIEW PHOTO";
                                 color: #10b981;
                                 font-size: 13px;
                                 font-weight: 800;
@@ -62,7 +64,7 @@ export component ResultView {
                                 vertical-alignment: center;
                             }
                             Text {
-                                text: "2. IMBAS QR TELEFON";
+                                text: "2. SCAN QR TO SAVE";
                                 color: #818cf8;
                                 font-size: 13px;
                                 font-weight: 800;
@@ -75,7 +77,7 @@ export component ResultView {
                                 vertical-alignment: center;
                             }
                             Text {
-                                text: "3. CETAK / SELESAI";
+                                text: "3. TAKE YOUR PRINT";
                                 color: #f472b6;
                                 font-size: 13px;
                                 font-weight: 800;
@@ -98,13 +100,13 @@ export component ResultView {
                         alignment: center;
                         spacing: 8px;
                         Text {
-                            text: "⏱️ Auto-reset dalam:";
+                            text: "⏱️ Auto-reset in:";
                             color: Theme.text_muted;
                             font-size: 13px;
                             vertical-alignment: center;
                         }
                         Text {
-                            text: root.auto_return_seconds + " saat";
+                            text: root.auto_return_seconds + " sec";
                             color: #a5b4fc;
                             font-size: 15px;
                             font-weight: 700;
@@ -165,7 +167,7 @@ export component ResultView {
                             alignment: center;
 
                             Text {
-                                text: "📱 1. IMBAS UNTUK SIMPAN";
+                                text: "📱 1. SCAN QR TO DOWNLOAD";
                                 color: #818cf8;
                                 font-size: 15px;
                                 font-weight: 800;
@@ -194,7 +196,7 @@ export component ResultView {
                             }
 
                             Text {
-                                text: "Halakan kamera telefon ke Kod QR untuk muat turun foto resolusi asal terus ke galeri telefon anda.";
+                                text: "Point your phone camera at the QR Code to save the composite & individual DSLR shots.";
                                 color: Theme.text_secondary;
                                 font-size: 12px;
                                 horizontal-alignment: center;
@@ -225,7 +227,7 @@ export component ResultView {
                             spacing: 10px;
 
                             Text {
-                                text: "🖨️ 2. PILIHAN CETAKAN & AKSI";
+                                text: "🖨️ 2. PRINT & ACTIONS";
                                 color: Theme.text_muted;
                                 font-size: 12px;
                                 font-weight: 700;
@@ -233,14 +235,17 @@ export component ResultView {
                             }
 
                             AnimatedButton {
-                                text: "🖨️ CETAK FOTO (PRINT 1 COPY)";
+                                text: root.is_printing_busy ? "🖨️ SENDING TO PRINTER..." : (root.auto_print_enabled ? "🖨️ PRINT EXTRA COPY (+1)" : "🖨️ PRINT PHOTO");
                                 btn_width: 360px;
                                 btn_height: 52px;
                                 font_size: 15px;
-                                primary: true;
+                                primary: !root.auto_print_enabled && !root.is_printing_busy;
+                                enabled: !root.is_printing_busy;
 
                                 clicked => {
-                                    root.print_session();
+                                    if (!root.is_printing_busy) {
+                                        root.print_session();
+                                    }
                                 }
                             }
 
@@ -248,7 +253,7 @@ export component ResultView {
                                 spacing: 10px;
 
                                 AnimatedButton {
-                                    text: "🔄 AMBIL SEMULA";
+                                    text: "🔄 RETAKE";
                                     btn_width: 175px;
                                     btn_height: 46px;
                                     font_size: 13px;
@@ -260,11 +265,11 @@ export component ResultView {
                                 }
 
                                 AnimatedButton {
-                                    text: "✨ SELESAI";
+                                    text: "✨ DONE";
                                     btn_width: 175px;
                                     btn_height: 46px;
                                     font_size: 13px;
-                                    primary: false;
+                                    primary: true;
 
                                     clicked => {
                                         root.finish_session();

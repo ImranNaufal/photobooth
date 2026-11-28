@@ -1,4 +1,4 @@
-import { Theme } from "theme.slint";
+import { Theme, GalleryPhotoItem } from "theme.slint";
 import { AnimatedButton } from "components/animated_button.slint";
 import { FlashOverlay } from "components/flash_overlay.slint";
 import { IdleView } from "views/idle_view.slint";
@@ -6,6 +6,8 @@ import { CaptureView } from "views/capture_view.slint";
 import { ProcessingView } from "views/processing_view.slint";
 import { ResultView } from "views/result_view.slint";
 import { AdminModal } from "views/admin_modal.slint";
+
+export { GalleryPhotoItem }
 
 export enum AppState {
     Idle,
@@ -37,8 +39,12 @@ export component AppWindow inherits Window {
     in-out property <string> active_template_id: "default-4r-3pose";
     in-out property <string> printer_name: "DS-RX1";
     in-out property <int> countdown_seconds_setting: 3;
-    in-out property <int> auto_return_seconds: 15;
+    in-out property <int> auto_return_seconds: 25;
     in-out property <bool> admin_unlocked: false;
+    in-out property <bool> allow_guest_layout_choice: true;
+    in-out property <bool> auto_print_enabled: true;
+    in-out property <bool> is_printing_busy: false;
+    in-out property <[GalleryPhotoItem]> gallery_items: [];
 
     // Software Version & In-App Auto-Update properties
     in-out property <string> app_version: "v0.1.0";
@@ -58,7 +64,10 @@ export component AppWindow inherits Window {
     callback finish_session();
     callback retake_session();
     callback admin_unlock(string);
-    callback save_settings(bool, string, string, int);
+    callback save_settings(bool, string, string, int, bool, bool);
+    callback select_template_live(string);
+    callback refresh_gallery();
+    callback print_gallery_item(string, bool);
     callback test_camera();
     callback test_printer();
     callback check_for_updates();
@@ -69,8 +78,10 @@ export component AppWindow inherits Window {
         width: 100%;
         height: 100%;
         active_template_id: root.active_template_id;
+        allow_guest_layout_choice: root.allow_guest_layout_choice;
         select_template(id) => {
             root.active_template_id = id;
+            root.select_template_live(id);
         }
         start_session => {
             root.start_session();
@@ -78,6 +89,7 @@ export component AppWindow inherits Window {
         open_admin => {
             root.admin_entered_pin = "";
             root.admin_unlocked = false;
+            root.status_message = "";
             root.current_state = AppState.Admin;
         }
     }
@@ -105,6 +117,8 @@ export component AppWindow inherits Window {
         qr_code_image: root.qr_code_image;
         status_message: root.status_message;
         auto_return_seconds: root.auto_return_seconds;
+        is_printing_busy: root.is_printing_busy;
+        auto_print_enabled: root.auto_print_enabled;
 
         print_session => {
             root.print_current_session();
@@ -125,6 +139,9 @@ export component AppWindow inherits Window {
         active_template_id: root.active_template_id;
         printer_name: root.printer_name;
         countdown_sec: root.countdown_seconds_setting;
+        allow_guest_layout_choice: root.allow_guest_layout_choice;
+        auto_print_enabled: root.auto_print_enabled;
+        gallery_items: root.gallery_items;
         entered_pin: root.admin_entered_pin;
         status_message: root.status_message;
         app_version: root.app_version;
@@ -146,11 +163,23 @@ export component AppWindow inherits Window {
         toggle_hardware_mode => {
             root.is_hardware_mode = !root.is_hardware_mode;
         }
+        toggle_guest_layout_choice => {
+            root.allow_guest_layout_choice = !root.allow_guest_layout_choice;
+        }
+        toggle_auto_print => {
+            root.auto_print_enabled = !root.auto_print_enabled;
+        }
         set_template(id) => {
             root.active_template_id = id;
         }
         change_countdown(sec) => {
             root.countdown_seconds_setting = sec;
+        }
+        refresh_gallery => {
+            root.refresh_gallery();
+        }
+        print_gallery_item(p, is_strip) => {
+            root.print_gallery_item(p, is_strip);
         }
         test_camera => {
             root.test_camera();
@@ -165,7 +194,14 @@ export component AppWindow inherits Window {
             root.apply_update();
         }
         save_and_close => {
-            root.save_settings(root.is_hardware_mode, root.active_template_id, root.printer_name, root.countdown_seconds_setting);
+            root.save_settings(
+                root.is_hardware_mode,
+                root.active_template_id,
+                root.printer_name,
+                root.countdown_seconds_setting,
+                root.allow_guest_layout_choice,
+                root.auto_print_enabled
+            );
             root.current_state = AppState.Idle;
         }
         close_admin => {

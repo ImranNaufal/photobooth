@@ -1,4 +1,4 @@
-import { Theme } from "../theme.slint";
+import { Theme, GalleryPhotoItem } from "../theme.slint";
 import { AnimatedButton } from "../components/animated_button.slint";
 
 export component AdminModal {
@@ -7,6 +7,9 @@ export component AdminModal {
     in property <string> active_template_id: "default-4r-3pose";
     in property <string> printer_name: "DS-RX1";
     in property <int> countdown_sec: 3;
+    in property <bool> allow_guest_layout_choice: true;
+    in property <bool> auto_print_enabled: true;
+    in property <[GalleryPhotoItem]> gallery_items: [];
     in property <string> entered_pin: "";
     in property <string> status_message: "";
     in property <string> app_version: "v0.1.0";
@@ -16,12 +19,18 @@ export component AdminModal {
     in property <string> update_status_text: "";
     in property <float> update_progress: 0.0;
 
+    property <bool> show_reprint_picker: false;
+
     callback unlock_requested(string);
     callback pin_digit_pressed(string);
     callback pin_clear_pressed();
     callback toggle_hardware_mode();
+    callback toggle_guest_layout_choice();
+    callback toggle_auto_print();
     callback set_template(string);
     callback change_countdown(int);
+    callback refresh_gallery();
+    callback print_gallery_item(string, bool);
     callback test_camera();
     callback test_printer();
     callback check_for_updates();
@@ -100,7 +109,7 @@ export component AdminModal {
             spacing: 24px;
 
             Text {
-                text: "Enter Admin PIN (Default: 1234)";
+                text: "Enter Admin PIN";
                 color: Theme.text_secondary;
                 font-size: 18px;
                 horizontal-alignment: center;
@@ -283,42 +292,43 @@ export component AdminModal {
             }
         }
 
-        // View 2: Unlocked - Hardware & Settings Configuration Panel
-        if root.is_unlocked : VerticalLayout {
-            y: 130px;
-            width: 800px;
+        // View 2A: Unlocked - Hardware & Settings Configuration Panel
+        if root.is_unlocked && !root.show_reprint_picker : VerticalLayout {
+            y: 126px;
+            width: 840px;
             x: (parent.width - self.width) / 2;
-            spacing: 20px;
+            spacing: 12px;
 
             // Setting 1: Hardware Mode Toggle
             Rectangle {
-                height: 72px;
+                height: 62px;
                 border-radius: Theme.radius_md;
                 background: Theme.surface;
                 border-width: 1px;
                 border-color: Theme.border;
 
                 HorizontalLayout {
-                    padding: 16px;
+                    padding-left: 16px;
+                    padding-right: 16px;
                     alignment: space-between;
                     VerticalLayout {
                         alignment: center;
                         Text {
                             text: "Operation Mode";
                             color: Theme.text_primary;
-                            font-size: 17px;
+                            font-size: 16px;
                             font-weight: 700;
                         }
                         Text {
-                            text: root.is_hardware_mode ? "Hardware Mode (Canon EOS 700D + DNP DS-RX1HS)" : "Mock Mode (Simulated Camera & Disk Spool Print)";
+                            text: root.is_hardware_mode ? "Hardware Mode (Canon EOS 700D + DNP DS-RX1HS)" : "Mock Mode (Webcam / Simulated & Disk Spool)";
                             color: root.is_hardware_mode ? #38bdf8 : #a78bfa;
-                            font-size: 13px;
+                            font-size: 12px;
                         }
                     }
 
                     Rectangle {
-                        width: 160px;
-                        height: 40px;
+                        width: 150px;
+                        height: 36px;
                         border-radius: Theme.radius_pill;
                         background: root.is_hardware_mode ? #0284c7 : #475569;
 
@@ -329,7 +339,7 @@ export component AdminModal {
                         Text {
                             text: root.is_hardware_mode ? "HARDWARE" : "MOCK DEV";
                             color: #ffffff;
-                            font-size: 13px;
+                            font-size: 12px;
                             font-weight: 800;
                             horizontal-alignment: center;
                             vertical-alignment: center;
@@ -338,37 +348,39 @@ export component AdminModal {
                 }
             }
 
-            // Setting 2: Active Template Selection
+            // Setting 2: Active Template & Guest Choice
             Rectangle {
-                height: 72px;
+                height: 62px;
                 border-radius: Theme.radius_md;
                 background: Theme.surface;
                 border-width: 1px;
                 border-color: Theme.border;
 
                 HorizontalLayout {
-                    padding: 16px;
+                    padding-left: 16px;
+                    padding-right: 16px;
                     alignment: space-between;
                     VerticalLayout {
                         alignment: center;
                         Text {
                             text: "Print Template Layout";
                             color: Theme.text_primary;
-                            font-size: 17px;
+                            font-size: 16px;
                             font-weight: 700;
                         }
                         Text {
-                            text: root.active_template_id == "default-4r-3pose" ? "Standard 4R Postcard (1800x1200)" : "2x6 Photo Strip (Auto Duplicate & Cut)";
+                            text: root.active_template_id == "default-4r-3pose" ? "Default: 4R Postcard (1800x1200)" : "Default: 2x6 Strip Cut";
                             color: Theme.text_secondary;
-                            font-size: 13px;
+                            font-size: 12px;
                         }
                     }
 
                     HorizontalLayout {
                         spacing: 8px;
+                        alignment: center;
                         Rectangle {
                             width: 100px;
-                            height: 38px;
+                            height: 36px;
                             border-radius: Theme.radius_pill;
                             background: root.active_template_id == "default-4r-3pose" ? Theme.primary : Theme.surface_light;
 
@@ -387,7 +399,7 @@ export component AdminModal {
 
                         Rectangle {
                             width: 110px;
-                            height: 38px;
+                            height: 36px;
                             border-radius: Theme.radius_pill;
                             background: root.active_template_id == "default-2x6-strip" ? Theme.primary : Theme.surface_light;
 
@@ -403,41 +415,62 @@ export component AdminModal {
                                 vertical-alignment: center;
                             }
                         }
+
+                        Rectangle {
+                            width: 135px;
+                            height: 36px;
+                            border-radius: Theme.radius_pill;
+                            background: root.allow_guest_layout_choice ? #059669 : #64748b;
+
+                            TouchArea {
+                                clicked => { root.toggle_guest_layout_choice(); }
+                            }
+                            Text {
+                                text: root.allow_guest_layout_choice ? "Guest Pick: ON" : "Guest Pick: LOCK";
+                                color: #ffffff;
+                                font-size: 11px;
+                                font-weight: 800;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
                     }
                 }
             }
 
-            // Setting 3: Countdown Seconds
+            // Setting 3: Countdown & Auto-Print Behavior
             Rectangle {
-                height: 72px;
+                height: 62px;
                 border-radius: Theme.radius_md;
                 background: Theme.surface;
                 border-width: 1px;
                 border-color: Theme.border;
 
                 HorizontalLayout {
-                    padding: 16px;
+                    padding-left: 16px;
+                    padding-right: 16px;
                     alignment: space-between;
                     VerticalLayout {
                         alignment: center;
                         Text {
-                            text: "Capture Countdown";
+                            text: "Countdown & Auto-Print";
                             color: Theme.text_primary;
-                            font-size: 17px;
+                            font-size: 16px;
                             font-weight: 700;
                         }
                         Text {
-                            text: root.countdown_sec + " seconds between poses";
+                            text: root.countdown_sec + "s countdown • Auto-print after session";
                             color: Theme.text_secondary;
-                            font-size: 13px;
+                            font-size: 12px;
                         }
                     }
 
                     HorizontalLayout {
                         spacing: 8px;
+                        alignment: center;
                         for s in [3, 5, 7]: Rectangle {
-                            width: 50px;
-                            height: 38px;
+                            width: 46px;
+                            height: 36px;
                             border-radius: Theme.radius_pill;
                             background: root.countdown_sec == s ? Theme.primary : Theme.surface_light;
 
@@ -447,8 +480,27 @@ export component AdminModal {
                             Text {
                                 text: s + "s";
                                 color: #ffffff;
-                                font-size: 13px;
+                                font-size: 12px;
                                 font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Rectangle {
+                            width: 135px;
+                            height: 36px;
+                            border-radius: Theme.radius_pill;
+                            background: root.auto_print_enabled ? #059669 : #475569;
+
+                            TouchArea {
+                                clicked => { root.toggle_auto_print(); }
+                            }
+                            Text {
+                                text: root.auto_print_enabled ? "Auto-Print: ON" : "Auto-Print: OFF";
+                                color: #ffffff;
+                                font-size: 11px;
+                                font-weight: 800;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
                             }
@@ -457,37 +509,39 @@ export component AdminModal {
                 }
             }
 
-            // Hardware Diagnostics & Testing
+            // Setting 4: Hardware Diagnostics & Reprint Picker
             Rectangle {
-                height: 72px;
+                height: 62px;
                 border-radius: Theme.radius_md;
                 background: Theme.surface;
                 border-width: 1px;
                 border-color: Theme.border;
 
                 HorizontalLayout {
-                    padding: 16px;
+                    padding-left: 16px;
+                    padding-right: 16px;
                     alignment: space-between;
                     VerticalLayout {
                         alignment: center;
                         Text {
-                            text: "Hardware Diagnostics";
+                            text: "Hardware Diagnostics & Reprint";
                             color: Theme.text_primary;
-                            font-size: 17px;
+                            font-size: 16px;
                             font-weight: 700;
                         }
                         Text {
-                            text: "Trigger test capture or print spool";
+                            text: "Test DSLR/Printer or pick any captured photo";
                             color: Theme.text_secondary;
-                            font-size: 13px;
+                            font-size: 12px;
                         }
                     }
 
                     HorizontalLayout {
-                        spacing: 12px;
+                        spacing: 8px;
+                        alignment: center;
                         Rectangle {
-                            width: 130px;
-                            height: 38px;
+                            width: 122px;
+                            height: 36px;
                             border-radius: Theme.radius_pill;
                             background: #334155;
                             border-width: 1px;
@@ -499,7 +553,7 @@ export component AdminModal {
                             Text {
                                 text: "📷 Test Camera";
                                 color: #f8fafc;
-                                font-size: 13px;
+                                font-size: 12px;
                                 font-weight: 700;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
@@ -507,8 +561,8 @@ export component AdminModal {
                         }
 
                         Rectangle {
-                            width: 130px;
-                            height: 38px;
+                            width: 122px;
+                            height: 36px;
                             border-radius: Theme.radius_pill;
                             background: #334155;
                             border-width: 1px;
@@ -520,8 +574,32 @@ export component AdminModal {
                             Text {
                                 text: "🖨️ Test Printer";
                                 color: #f8fafc;
-                                font-size: 13px;
+                                font-size: 12px;
                                 font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Rectangle {
+                            width: 130px;
+                            height: 36px;
+                            border-radius: Theme.radius_pill;
+                            background: #4f46e5;
+                            border-width: 1px;
+                            border-color: #818cf8;
+
+                            TouchArea {
+                                clicked => {
+                                    root.refresh_gallery();
+                                    root.show_reprint_picker = true;
+                                }
+                            }
+                            Text {
+                                text: "🖼️ Pick Photo";
+                                color: #ffffff;
+                                font-size: 12px;
+                                font-weight: 800;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
                             }
@@ -532,14 +610,15 @@ export component AdminModal {
 
             // Setting 5: Software Version & Internet Auto-Update
             Rectangle {
-                height: 72px;
+                height: 62px;
                 border-radius: Theme.radius_md;
                 background: Theme.surface;
                 border-width: 1px;
                 border-color: root.update_available ? Theme.primary : Theme.border;
 
                 HorizontalLayout {
-                    padding: 16px;
+                    padding-left: 16px;
+                    padding-right: 16px;
                     alignment: space-between;
                     VerticalLayout {
                         alignment: center;
@@ -548,11 +627,11 @@ export component AdminModal {
                             Text {
                                 text: "Software Version & Updates";
                                 color: Theme.text_primary;
-                                font-size: 17px;
+                                font-size: 16px;
                                 font-weight: 700;
                             }
                             Rectangle {
-                                width: 68px;
+                                width: 64px;
                                 height: 22px;
                                 border-radius: Theme.radius_pill;
                                 background: #1e293b;
@@ -571,7 +650,7 @@ export component AdminModal {
                                   (root.update_available ? ("✨ New version " + root.update_version_string + " ready to install!") :
                                   (root.update_status_text != "" ? root.update_status_text : "System is up to date."));
                             color: root.update_available ? #38bdf8 : Theme.text_secondary;
-                            font-size: 13px;
+                            font-size: 12px;
                         }
                     }
 
@@ -580,8 +659,8 @@ export component AdminModal {
                         spacing: 8px;
 
                         if root.update_available : Rectangle {
-                            width: 190px;
-                            height: 40px;
+                            width: 180px;
+                            height: 36px;
                             border-radius: Theme.radius_pill;
                             background: root.update_progress > 0.0 ? #4f46e5 : #16a34a;
 
@@ -600,8 +679,8 @@ export component AdminModal {
                         }
 
                         if !root.update_available : Rectangle {
-                            width: 150px;
-                            height: 38px;
+                            width: 145px;
+                            height: 36px;
                             border-radius: Theme.radius_pill;
                             background: root.is_checking_update ? #334155 : Theme.surface_light;
                             border-width: 1px;
@@ -626,14 +705,15 @@ export component AdminModal {
 
             // Save & Exit Actions
             HorizontalLayout {
+                padding-top: 6px;
                 spacing: 16px;
                 alignment: center;
 
                 AnimatedButton {
                     text: "💾 SAVE & APPLY SETTINGS";
                     btn_width: 380px;
-                    btn_height: 54px;
-                    font_size: 16px;
+                    btn_height: 50px;
+                    font_size: 15px;
                     primary: true;
 
                     clicked => { root.save_and_close(); }
@@ -642,11 +722,160 @@ export component AdminModal {
                 AnimatedButton {
                     text: "EXIT WITHOUT SAVING";
                     btn_width: 260px;
-                    btn_height: 54px;
-                    font_size: 16px;
+                    btn_height: 50px;
+                    font_size: 15px;
                     primary: false;
 
                     clicked => { root.close_admin(); }
+                }
+            }
+        }
+
+        // View 2B: Unlocked - Recent Photos Reprint Picker
+        if root.is_unlocked && root.show_reprint_picker : VerticalLayout {
+            y: 132px;
+            width: 840px;
+            height: parent.height - 160px;
+            x: (parent.width - self.width) / 2;
+            spacing: 12px;
+
+            HorizontalLayout {
+                height: 44px;
+                alignment: space-between;
+
+                Text {
+                    text: "🖼️ Select Any Captured Raw or Composite Photo to Print";
+                    color: Theme.text_primary;
+                    font-size: 17px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+
+                HorizontalLayout {
+                    spacing: 10px;
+                    Rectangle {
+                        width: 110px;
+                        height: 38px;
+                        border-radius: Theme.radius_pill;
+                        background: Theme.surface_light;
+                        TouchArea { clicked => { root.refresh_gallery(); } }
+                        Text {
+                            text: "🔄 Refresh";
+                            color: #ffffff;
+                            font-size: 12px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Rectangle {
+                        width: 150px;
+                        height: 38px;
+                        border-radius: Theme.radius_pill;
+                        background: #475569;
+                        TouchArea { clicked => { root.show_reprint_picker = false; } }
+                        Text {
+                            text: "← Back to Settings";
+                            color: #ffffff;
+                            font-size: 12px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                vertical-stretch: 1;
+                border-radius: Theme.radius_md;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border;
+                clip: true;
+
+                Flickable {
+                    width: 100%;
+                    height: 100%;
+                    content-height: root.gallery_items.length * 60px + 24px;
+
+                    VerticalLayout {
+                        padding: 12px;
+                        spacing: 8px;
+
+                        if root.gallery_items.length == 0 : Text {
+                            text: "No photos found yet in output/raw or output/composites.";
+                            color: Theme.text_muted;
+                            font-size: 14px;
+                            horizontal-alignment: center;
+                        }
+
+                        for item in root.gallery_items : Rectangle {
+                            height: 52px;
+                            border-radius: Theme.radius_sm;
+                            background: #0f172a;
+                            border-width: 1px;
+                            border-color: #334155;
+
+                            HorizontalLayout {
+                                padding-left: 14px;
+                                padding-right: 14px;
+                                alignment: space-between;
+
+                                HorizontalLayout {
+                                    spacing: 12px;
+                                    alignment: start;
+
+                                    Rectangle {
+                                        width: 88px;
+                                        height: 26px;
+                                        y: 13px;
+                                        border-radius: Theme.radius_pill;
+                                        background: item.kind == "Composite" ? rgba(99, 102, 241, 0.25) : rgba(16, 185, 129, 0.2);
+                                        Text {
+                                            text: item.kind;
+                                            color: item.kind == "Composite" ? #a5b4fc : #6ee7b7;
+                                            font-size: 11px;
+                                            font-weight: 800;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+
+                                    Text {
+                                        text: item.filename;
+                                        color: Theme.text_primary;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                Rectangle {
+                                    width: 130px;
+                                    height: 34px;
+                                    y: 9px;
+                                    border-radius: Theme.radius_pill;
+                                    background: Theme.primary;
+
+                                    TouchArea {
+                                        clicked => {
+                                            root.print_gallery_item(item.path, item.is_strip);
+                                        }
+                                    }
+                                    Text {
+                                        text: "🖨️ Print 1 Sheet";
+                                        color: #ffffff;
+                                        font-size: 12px;
+                                        font-weight: 800;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -66,7 +66,7 @@ export component CaptureView {
                     border-color: Theme.primary;
 
                     Text {
-                        text: root.countdown_value > 0 ? "✨ BERSEDIA & SENYUM! ✨" : "SEDANG MERAKAM POSE...";
+                        text: root.countdown_value > 0 ? "✨ GET READY & SMILE! ✨" : (root.status_message != "" ? root.status_message : "📸 HOLD STILL — SNAPPING...");
                         color: Theme.text_primary;
                         font-size: 15px;
                         font-weight: 800;
@@ -89,14 +89,14 @@ export component CaptureView {
                         alignment: center;
                         spacing: 6px;
                         Text {
-                            text: "💡 PANDUAN:";
+                            text: "💡 TIP:";
                             color: #a5b4fc;
                             font-size: 12px;
                             font-weight: 800;
                             vertical-alignment: center;
                         }
                         Text {
-                            text: "Kekal Di Kotak";
+                            text: "Stay In Frame";
                             color: Theme.text_secondary;
                             font-size: 12px;
                             font-weight: 600;
@@ -148,7 +148,7 @@ export component CaptureView {
                         border-color: rgba(129, 140, 248, 0.4);
 
                         Text {
-                            text: "📸 SELARIKAN WAJAH DI SINI";
+                            text: "📸 ALIGN FACE HERE";
                             color: #c7d2fe;
                             font-size: 11px;
                             font-weight: 800;
@@ -261,7 +261,7 @@ export component CaptureView {
                     border-color: root.current_shot > 1 ? #10b981 : (root.current_shot == 1 ? #6366f1 : #334155);
 
                     Text {
-                        text: root.current_shot > 1 ? "✅ Pose 1 Selesai" : (root.current_shot == 1 ? "📸 Pose 1 (Aktif)" : "⏳ Pose 1");
+                        text: root.current_shot > 1 ? "✅ Pose 1 Done" : (root.current_shot == 1 ? "📸 Pose 1 (Active)" : "⏳ Pose 1");
                         color: root.current_shot >= 1 ? #ffffff : #64748b;
                         font-size: 13px;
                         font-weight: 700;
@@ -280,7 +280,7 @@ export component CaptureView {
                     border-color: root.current_shot > 2 ? #10b981 : (root.current_shot == 2 ? #6366f1 : #334155);
 
                     Text {
-                        text: root.current_shot > 2 ? "✅ Pose 2 Selesai" : (root.current_shot == 2 ? "📸 Pose 2 (Aktif)" : "⏳ Pose 2");
+                        text: root.current_shot > 2 ? "✅ Pose 2 Done" : (root.current_shot == 2 ? "📸 Pose 2 (Active)" : "⏳ Pose 2");
                         color: root.current_shot >= 2 ? #ffffff : #64748b;
                         font-size: 13px;
                         font-weight: 700;
@@ -299,7 +299,7 @@ export component CaptureView {
                     border-color: root.current_shot > 3 ? #10b981 : (root.current_shot == 3 ? #6366f1 : #334155);
 
                     Text {
-                        text: root.current_shot > 3 ? "✅ Pose 3 Selesai" : (root.current_shot == 3 ? "📸 Pose 3 (Aktif)" : "⏳ Pose 3");
+                        text: root.current_shot > 3 ? "✅ Pose 3 Done" : (root.current_shot == 3 ? "📸 Pose 3 (Active)" : "⏳ Pose 3");
                         color: root.current_shot >= 3 ? #ffffff : #64748b;
                         font-size: 13px;
                         font-weight: 700;

@@ -8,6 +8,7 @@ export component IdleView {
 
     in property <int> admin_tap_count: 0;
     in property <string> active_template_id: "default-4r-3pose";
+    in property <bool> allow_guest_layout_choice: true;
 
     Rectangle {
         width: 100%;
@@ -44,16 +45,12 @@ export component IdleView {
             HorizontalLayout {
                 alignment: center;
                 Rectangle {
-                    width: 220px;
+                    width: 240px;
                     height: 44px;
                     border-radius: Theme.radius_pill;
                     background: #1e293b;
                     border-width: 1px;
                     border-color: Theme.border_highlight;
-
-                    TouchArea {
-                        clicked => { root.open_admin(); }
-                    }
 
                     Text {
                         text: "✨ VINTAGE PHOTO STUDIO";
@@ -100,7 +97,7 @@ export component IdleView {
                         padding-right: 16px;
                         alignment: center;
                         Text {
-                            text: "📷 3 Pose Kiosk";
+                            text: "📷 3-Pose Studio";
                             color: #c7d2fe;
                             font-size: 13px;
                             font-weight: 700;
@@ -121,7 +118,7 @@ export component IdleView {
                         padding-right: 16px;
                         alignment: center;
                         Text {
-                            text: "🖨️ Cetakan 300 DPI";
+                            text: "🖨️ 300 DPI Instant Print";
                             color: #fbcfe8;
                             font-size: 13px;
                             font-weight: 700;
@@ -142,7 +139,7 @@ export component IdleView {
                         padding-right: 16px;
                         alignment: center;
                         Text {
-                            text: "📲 Imbas QR Ke Telefon";
+                            text: "📲 Scan QR to Phone";
                             color: #a7f3d0;
                             font-size: 13px;
                             font-weight: 700;
@@ -155,8 +152,8 @@ export component IdleView {
             // Spacing
             Rectangle { height: 8px; }
 
-            // Layout Selector: Choose format before starting!
-            HorizontalLayout {
+            // Layout Selector: Choose format before starting (if allowed by Admin)
+            if root.allow_guest_layout_choice : HorizontalLayout {
                 alignment: center;
                 spacing: 20px;
 
@@ -200,7 +197,7 @@ export component IdleView {
                                 font-weight: 800;
                             }
                             Text {
-                                text: "1800 x 1200 • 3 Pose";
+                                text: "1800 × 1200 • 3 Poses";
                                 color: root.active_template_id == "default-4r-3pose" ? #a5b4fc : #64748b;
                                 font-size: 12px;
                                 font-weight: 600;
@@ -249,7 +246,7 @@ export component IdleView {
                                 font-weight: 800;
                             }
                             Text {
-                                text: "Potong Dua • 3 Pose";
+                                text: "Double Strip • 3 Poses";
                                 color: root.active_template_id == "default-2x6-strip" ? #f472b6 : #64748b;
                                 font-size: 12px;
                                 font-weight: 600;

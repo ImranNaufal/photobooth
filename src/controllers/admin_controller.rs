@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use tokio::sync::{Mutex as TokioMutex, RwLock};
 use tracing::{error, info, warn};
@@ -8,7 +9,7 @@ use crate::services::{
     CameraProvider, Canon700dCamera, DnpRx1hsPrinter, LaptopWebcamCamera, MockCamera, MockPrinter,
     PrinterProvider, UpdaterService, VersionInfo,
 };
-use crate::AppWindow;
+use crate::{AppWindow, GalleryPhotoItem};
 
 pub struct AdminController {
     window: slint::Weak<AppWindow>,
@@ -66,6 +67,8 @@ impl AdminController {
         template_id: String,
         printer_name: String,
         countdown_sec: i32,
+        allow_guest_layout_choice: bool,
+        auto_print: bool,
     ) {
         let config_clone = self.config.clone();
         let camera_provider = self.camera_provider.clone();
@@ -79,6 +82,8 @@ impl AdminController {
                 cfg.active_template_id = template_id.clone();
                 cfg.printer_name = printer_name.clone();
                 cfg.countdown_seconds = countdown_sec.clamp(1, 10) as u8;
+                cfg.allow_guest_layout_choice = allow_guest_layout_choice;
+                cfg.auto_print = auto_print;
 
                 if let Err(e) = cfg.save() {
                     error!("Failed to save config: {:?}", e);
@@ -130,6 +135,8 @@ impl AdminController {
                     w.set_is_hardware_mode(is_hardware_mode);
                     w.set_active_template_id(template_id.into());
                     w.set_countdown_seconds_setting(countdown_sec);
+                    w.set_allow_guest_layout_choice(allow_guest_layout_choice);
+                    w.set_auto_print_enabled(auto_print);
                     w.set_status_message("Settings saved & hardware reloaded!".into());
                 }
             });
@@ -233,6 +240,114 @@ impl AdminController {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(w) = window_weak.upgrade() {
                             w.set_status_message(format!("Printer test error: {}", e).into());
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    /// Loads recent captured Raw & Composite images into the Admin Reprint Picker
+    pub fn handle_load_gallery(&self) {
+        let window_weak = self.window.clone();
+        tokio::spawn(async move {
+            let mut entries_with_time = Vec::new();
+            for (dir_str, kind) in [("output/composites", "Composite"), ("output/raw", "Raw")] {
+                if let Ok(entries) = std::fs::read_dir(dir_str) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file() {
+                            if let Some(ext) = path.extension() {
+                                if ext.eq_ignore_ascii_case("jpg") || ext.eq_ignore_ascii_case("png") {
+                                    let mod_time = entry
+                                        .metadata()
+                                        .and_then(|m| m.modified())
+                                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                                    entries_with_time.push((mod_time, kind, path));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            entries_with_time.sort_by(|a, b| b.0.cmp(&a.0));
+            entries_with_time.truncate(15);
+
+            let items: Vec<(String, String, String, bool)> = entries_with_time
+                .into_iter()
+                .map(|(_, kind, path)| {
+                    let filename = path
+                        .file_name()
+                        .map(|f| f.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    let path_str = path.to_string_lossy().to_string();
+                    let is_strip = if kind == "Composite" {
+                        image::image_dimensions(&path)
+                            .map(|(w, h)| w == 1200 && h == 1800)
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    };
+                    (filename, path_str, kind.to_string(), is_strip)
+                })
+                .collect();
+
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = window_weak.upgrade() {
+                    let slint_items: Vec<GalleryPhotoItem> = items
+                        .into_iter()
+                        .map(|(filename, path, kind, is_strip)| GalleryPhotoItem {
+                            filename: filename.into(),
+                            path: path.into(),
+                            kind: kind.into(),
+                            is_strip,
+                        })
+                        .collect();
+                    let model = Rc::new(slint::VecModel::from(slint_items));
+                    w.set_gallery_items(slint::ModelRc::from(model));
+                }
+            });
+        });
+    }
+
+    /// Prints a specific photo picked from the Admin Gallery / Reprint Picker
+    pub fn handle_print_gallery_item(&self, file_path: String, is_strip_2x6: bool) {
+        let printer_provider = self.printer_provider.clone();
+        let window_weak = self.window.clone();
+
+        tokio::spawn(async move {
+            let p = PathBuf::from(&file_path);
+            let filename = p
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| "photo.jpg".into());
+
+            let _ = slint::invoke_from_event_loop({
+                let window_weak = window_weak.clone();
+                let filename = filename.clone();
+                move || {
+                    if let Some(w) = window_weak.upgrade() {
+                        w.set_status_message(format!("🖨️ Printing {}...", filename).into());
+                    }
+                }
+            });
+
+            let prn = printer_provider.read().await;
+            match prn.print_image(Path::new(&file_path), is_strip_2x6, 1) {
+                Ok(_) => {
+                    info!("Admin reprinted selected file: {:?}", file_path);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = window_weak.upgrade() {
+                            w.set_status_message(format!("✅ Reprint sent: {}", filename).into());
+                        }
+                    });
+                }
+                Err(e) => {
+                    error!("Admin reprint failed: {:?}", e);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = window_weak.upgrade() {
+                            w.set_status_message(format!("⚠️ Reprint error: {}", e).into());
                         }
                     });
                 }

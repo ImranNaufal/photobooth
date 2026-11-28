@@ -32,6 +32,7 @@ pub struct BoothController {
     active_session: Arc<TokioMutex<Option<ActiveSessionData>>>,
     is_session_running: Arc<AtomicBool>,
     is_reviewing: Arc<AtomicBool>,
+    is_printing_busy: Arc<AtomicBool>,
     timer_cancel_token: Arc<TokioMutex<Option<CancellationToken>>>,
 }
 
@@ -56,8 +57,24 @@ impl BoothController {
             active_session: Arc::new(TokioMutex::new(None)),
             is_session_running: Arc::new(AtomicBool::new(false)),
             is_reviewing: Arc::new(AtomicBool::new(false)),
+            is_printing_busy: Arc::new(AtomicBool::new(false)),
             timer_cancel_token: Arc::new(TokioMutex::new(None)),
         }
+    }
+
+    /// Persists template layout chosen by guest on Idle screen so backend uses the exact selection
+    pub fn handle_select_template(&self, template_id: String) {
+        let config_lock = self.config.clone();
+        tokio::spawn(async move {
+            let mut cfg = config_lock.write().await;
+            if cfg.active_template_id != template_id {
+                info!("Guest selected template layout: {}", template_id);
+                cfg.active_template_id = template_id;
+                if let Err(e) = cfg.save() {
+                    warn!("Failed to persist guest template selection: {:?}", e);
+                }
+            }
+        });
     }
 
     /// Spawns a background task that streams camera frames to Slint UI (~30 fps) when in Capture state
@@ -156,6 +173,7 @@ impl BoothController {
         let active_session = self.active_session.clone();
         let is_running_flag = self.is_session_running.clone();
         let is_reviewing = self.is_reviewing.clone();
+        let is_printing_busy = self.is_printing_busy.clone();
         let web_service = self.web_service.clone();
         let timer_cancel_token = self.timer_cancel_token.clone();
 
@@ -226,14 +244,13 @@ impl BoothController {
                     tokio::time::sleep(Duration::from_millis(1000)).await;
                 }
 
-                // Shutter Moment: Audio click & Flash overlay
-                AudioService::play_shutter_click();
+                // Signal guest to hold pose while camera focuses and snaps
                 let _ = slint::invoke_from_event_loop({
                     let window_weak = window_weak.clone();
                     move || {
                         if let Some(w) = window_weak.upgrade() {
                             w.set_countdown_value(0);
-                            w.set_flash_active(true);
+                            w.set_status_message("📸 HOLD STILL & SMILE!".into());
                         }
                     }
                 });
@@ -242,16 +259,20 @@ impl BoothController {
                     .join("raw")
                     .join(format!("session_{}_pose_{}.jpg", session_id, shot_idx));
 
-                // Non-blocking capture dispatch
+                // Capture photo from DSLR / Camera
                 let cam = camera_provider.read().await;
-                match cam.capture_photo(&shot_dest, shot_idx) {
+                let capture_res = cam.capture_photo(&shot_dest, shot_idx);
+                drop(cam);
+
+                match capture_res {
                     Ok(path) => {
                         captured_paths.push(path.clone());
 
-                        // Lock live stream loop so the captured photo stays visible on screen
+                        // Fire shutter sound & flash right as the real snap completes
+                        AudioService::play_shutter_click();
                         is_reviewing.store(true, Ordering::SeqCst);
 
-                        // Immediately display the real captured photo on screen for review
+                        // Immediately reveal captured photo underneath the flash fade
                         if let Ok(img) = image::open(&path) {
                             let preview_img = img.resize(1280, 853, image::imageops::FilterType::Triangle);
                             let rgb = preview_img.to_rgb8();
@@ -266,6 +287,17 @@ impl BoothController {
                                         pixel_buffer.make_mut_bytes().copy_from_slice(&raw_bytes);
                                         let slint_img = slint::Image::from_rgb8(pixel_buffer);
                                         w.set_live_view_image(slint_img);
+                                        w.set_flash_active(true);
+                                        w.set_status_message("✨ GREAT SHOT! ✨".into());
+                                    }
+                                }
+                            });
+                        } else {
+                            let _ = slint::invoke_from_event_loop({
+                                let window_weak = window_weak.clone();
+                                move || {
+                                    if let Some(w) = window_weak.upgrade() {
+                                        w.set_flash_active(true);
                                     }
                                 }
                             });
@@ -275,9 +307,8 @@ impl BoothController {
                         error!("Failed to capture pose #{}: {:?}", shot_idx, e);
                     }
                 }
-                drop(cam);
 
-                // Wait 300ms for flash animation
+                // Wait 300ms for flash animation fade
                 tokio::time::sleep(Duration::from_millis(300)).await;
                 let _ = slint::invoke_from_event_loop({
                     let window_weak = window_weak.clone();
@@ -293,6 +324,12 @@ impl BoothController {
             }
 
             is_reviewing.store(false, Ordering::SeqCst);
+
+            // Rest DSLR mirror / Live View while processing & printing
+            {
+                let cam = camera_provider.read().await;
+                cam.stop_live_view();
+            }
 
             // Switch to Processing State
             let _ = slint::invoke_from_event_loop({
@@ -381,7 +418,14 @@ impl BoothController {
                                 }
 
                                 w.set_current_state(AppState::Result);
-                                w.set_status_message("".into());
+                                w.set_status_message(
+                                    if auto_print {
+                                        "🖨️ Auto-printing 1 copy...".into()
+                                    } else {
+                                        "".into()
+                                    },
+                                );
+                                w.set_is_printing_busy(auto_print);
                                 w.set_auto_return_seconds(auto_timeout as i32);
                             }
                         }
@@ -389,16 +433,38 @@ impl BoothController {
 
                     // Auto-print if enabled in config
                     if auto_print {
+                        is_printing_busy.store(true, Ordering::SeqCst);
                         let pc = print_controller.clone();
                         let sid = session_id.clone();
                         let comp_path_clone = composite_path.clone();
                         let is_strip = template.is_strip_2x6;
+                        let window_weak_prn = window_weak.clone();
+                        let is_printing_flag = is_printing_busy.clone();
                         tokio::spawn(async move {
-                            if let Err(e) =
-                                pc.print_session(sid, comp_path_clone, is_strip, 1).await
-                            {
+                            let res = pc.print_session(sid, comp_path_clone, is_strip, 1).await;
+                            let _ = slint::invoke_from_event_loop({
+                                let window_weak = window_weak_prn.clone();
+                                let msg = match &res {
+                                    Ok(_) => "✅ Print sent to DNP DS-RX1!".to_string(),
+                                    Err(e) => format!("⚠️ Auto-print failed: {}", e),
+                                };
+                                move || {
+                                    if let Some(w) = window_weak.upgrade() {
+                                        w.set_status_message(msg.into());
+                                    }
+                                }
+                            });
+                            if let Err(e) = res {
                                 error!("Auto-print failed: {:?}", e);
                             }
+                            // 3-second anti-spam cooldown before allowing Extra Copy button
+                            tokio::time::sleep(Duration::from_secs(3)).await;
+                            is_printing_flag.store(false, Ordering::SeqCst);
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(w) = window_weak_prn.upgrade() {
+                                    w.set_is_printing_busy(false);
+                                }
+                            });
                         });
                     }
 
@@ -481,6 +547,15 @@ impl BoothController {
     }
 
     pub fn handle_print_current(&self) {
+        if self
+            .is_printing_busy
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            info!("Ignored duplicate print tap while printer is busy.");
+            return;
+        }
+
         // Cancel auto-return timer so guest is not kicked out mid-print
         let timer_token = self.timer_cancel_token.clone();
         tokio::spawn(async move {
@@ -493,6 +568,7 @@ impl BoothController {
         let active_session = self.active_session.clone();
         let print_controller = self.print_controller.clone();
         let window_weak = self.window.clone();
+        let is_printing_busy = self.is_printing_busy.clone();
 
         tokio::spawn(async move {
             let session_data = {
@@ -505,38 +581,42 @@ impl BoothController {
                     let window_weak = window_weak.clone();
                     move || {
                         if let Some(w) = window_weak.upgrade() {
-                            w.set_status_message("Checking printer and sending job...".into());
+                            w.set_is_printing_busy(true);
+                            w.set_status_message("🖨️ Sending extra copy to printer...".into());
                         }
                     }
                 });
 
-                match print_controller
+                let res = print_controller
                     .print_session(data.session_id, data.composite_path, data.is_strip_2x6, 1)
-                    .await
-                {
-                    Ok(_) => {
-                        let _ = slint::invoke_from_event_loop({
-                            let window_weak = window_weak.clone();
-                            move || {
-                                if let Some(w) = window_weak.upgrade() {
-                                    w.set_status_message("Printed successfully!".into());
-                                }
-                            }
-                        });
-                    }
+                    .await;
+
+                let msg = match &res {
+                    Ok(_) => "✅ Extra copy sent to printer!".to_string(),
                     Err(e) => {
                         error!("Print error: {:?}", e);
-                        let _ = slint::invoke_from_event_loop({
-                            let window_weak = window_weak.clone();
-                            move || {
-                                if let Some(w) = window_weak.upgrade() {
-                                    w.set_status_message(format!("Print failed: {}", e).into());
-                                }
-                            }
-                        });
+                        format!("⚠️ Print failed: {}", e)
                     }
-                }
+                };
+
+                let _ = slint::invoke_from_event_loop({
+                    let window_weak = window_weak.clone();
+                    move || {
+                        if let Some(w) = window_weak.upgrade() {
+                            w.set_status_message(msg.into());
+                        }
+                    }
+                });
+
+                tokio::time::sleep(Duration::from_secs(2)).await;
             }
+
+            is_printing_busy.store(false, Ordering::SeqCst);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = window_weak.upgrade() {
+                    w.set_is_printing_busy(false);
+                }
+            });
         });
     }
 

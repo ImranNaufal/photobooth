@@ -27,6 +27,10 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 
+# Build & vendor binaries for Canon bridge
+/tools/canon_bridge/lib/
+/tools/canon_bridge/*.exe
+
 # IDE and Editor configurations
 .vscode/
 .idea/

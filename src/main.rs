@@ -91,6 +91,9 @@ fn main() -> anyhow::Result<()> {
     window.set_active_template_id(config.active_template_id.clone().into());
     window.set_printer_name(config.printer_name.clone().into());
     window.set_countdown_seconds_setting(config.countdown_seconds as i32);
+    window.set_allow_guest_layout_choice(config.allow_guest_layout_choice);
+    window.set_auto_print_enabled(config.auto_print);
+    window.set_auto_return_seconds(config.result_timeout_seconds as i32);
     window.set_app_version(format!("v{}", models::APP_VERSION).into());
     window.set_current_state(AppState::Idle);
 
@@ -148,6 +151,13 @@ fn main() -> anyhow::Result<()> {
     }
 
     {
+        let bc = booth_controller.clone();
+        window.on_select_template_live(move |tmpl_id| {
+            bc.handle_select_template(tmpl_id.to_string());
+        });
+    }
+
+    {
         let ac = admin_controller.clone();
         window.on_admin_unlock(move |pin| {
             ac.handle_unlock(pin.as_str());
@@ -156,13 +166,29 @@ fn main() -> anyhow::Result<()> {
 
     {
         let ac = admin_controller.clone();
-        window.on_save_settings(move |is_hw, tmpl_id, prn_name, countdown_sec| {
+        window.on_save_settings(move |is_hw, tmpl_id, prn_name, countdown_sec, allow_guest, auto_print| {
             ac.handle_save_settings(
                 is_hw,
                 tmpl_id.to_string(),
                 prn_name.to_string(),
                 countdown_sec,
+                allow_guest,
+                auto_print,
             );
+        });
+    }
+
+    {
+        let ac = admin_controller.clone();
+        window.on_refresh_gallery(move || {
+            ac.handle_load_gallery();
+        });
+    }
+
+    {
+        let ac = admin_controller.clone();
+        window.on_print_gallery_item(move |path, is_strip| {
+            ac.handle_print_gallery_item(path.to_string(), is_strip);
         });
     }
 

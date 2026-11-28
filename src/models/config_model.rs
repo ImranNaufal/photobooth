@@ -25,6 +25,8 @@ pub struct AppConfig {
     pub auto_check_update: bool,
     #[serde(default)]
     pub alert_webhook_url: String,
+    #[serde(default = "default_true")]
+    pub allow_guest_layout_choice: bool,
 }
 
 fn default_app_version() -> String {
@@ -48,13 +50,14 @@ impl Default for AppConfig {
             printer_strip_preset_name: "DS-RX1-2x6".to_string(),
             active_template_id: "default-4r-3pose".to_string(),
             countdown_seconds: 3,
-            result_timeout_seconds: 15,
+            result_timeout_seconds: 25,
             admin_pin: "1234".to_string(),
             auto_print: true,
             app_version: default_app_version(),
             update_check_url: default_update_url(),
             auto_check_update: true,
             alert_webhook_url: String::new(),
+            allow_guest_layout_choice: true,
         }
     }
 }
