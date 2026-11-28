@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -8,8 +9,10 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
+using CameraControl.Devices;
+using CameraControl.Devices.Canon;
+using CameraControl.Devices.Classes;
 using Canon.Eos.Framework;
-using Canon.Eos.Framework.Eventing;
 
 namespace CanonBridge
 {
@@ -21,23 +24,26 @@ namespace CanonBridge
         private static readonly object _lvLock = new object();
         private static byte[] _latestLvJpeg = null;
         private static DateTime _latestLvUtc = DateTime.MinValue;
+        private static volatile bool _lvStarted = false;
 
         private static readonly object _capLock = new object();
         private static ManualResetEventSlim _captureDone = null;
         private static string _captureTargetPath = null;
         private static string _captureError = null;
-        private static bool _captureInProgress = false;
+        private static volatile bool _captureInProgress = false;
 
         private static Control _staInvoker = null;
         private static EosFramework _framework = null;
-        private static EosCamera _camera = null;
+        private static CanonSDKBase _sdk = null;
         private static string _cameraModel = "";
         private static string _lastError = "";
-        private static bool _wantLiveView = false;
-        private static string _tempSaveDir = Path.Combine(Path.GetTempPath(), "PhotoboothCanonTemp");
+        private static volatile bool _wantLiveView = false;
 
         private static TcpListener _listener = null;
         private static volatile bool _running = true;
+
+        private static bool _lvDiagLogged = false;
+        private static int _lvErrorCount = 0;
 
         private static void Log(string msg)
         {
@@ -51,14 +57,10 @@ namespace CanonBridge
             catch { }
         }
 
-        private static bool _lvDiagLogged = false;
-        private static int _lvErrorCount = 0;
-
         [STAThread]
         private static void Main(string[] args)
         {
             ConfigureNativeAndAssemblySearchPaths();
-            Directory.CreateDirectory(_tempSaveDir);
 
             int port = 5513;
             int parentPid = 0;
@@ -74,7 +76,7 @@ namespace CanonBridge
                 }
             }
 
-            Log("Starting CanonBridge on port " + port + " (parentPid=" + parentPid + ")");
+            Log("Starting CanonBridge (CanonSDKBase in-session) on port " + port + " (parentPid=" + parentPid + ")");
 
             // Invisible Win32 message-pump Control on the STA thread
             _staInvoker = new Control();
@@ -95,13 +97,13 @@ namespace CanonBridge
                 Log(_lastError);
             }
 
-            // Reconnect watchdog timer on STA thread (1500ms) - NEVER reconnect during CLI capture!
+            // Reconnect watchdog timer on STA thread (1500ms) - never touch camera while capturing
             var timer = new System.Windows.Forms.Timer();
             timer.Interval = 1500;
             timer.Tick += delegate
             {
                 if (_captureInProgress) return;
-                if (_camera == null || !_camera.IsSessionOpen)
+                if (_sdk == null || !_sdk.IsConnected)
                 {
                     TryConnectCamera();
                 }
@@ -113,33 +115,9 @@ namespace CanonBridge
             lvTimer.Interval = 35;
             lvTimer.Tick += delegate
             {
-                if (_wantLiveView && !_captureInProgress && _camera != null && _camera.IsSessionOpen)
+                if (_wantLiveView && !_captureInProgress && _sdk != null && _sdk.IsConnected)
                 {
-                    try
-                    {
-                        if (!_camera.IsInHostLiveViewMode)
-                        {
-                            _camera.StartLiveView();
-                            if (!_camera.IsInHostLiveViewMode)
-                            {
-                                _camera.LiveViewDevice = EosLiveViewDevice.Host;
-                            }
-                        }
-                        bool ok = _camera.DownloadEvf();
-                        if (!_lvDiagLogged)
-                        {
-                            _lvDiagLogged = true;
-                            Log("LV Poll diag: Device=" + _camera.LiveViewDevice + " IsInLV=" + _camera.IsInLiveViewMode + " IsHost=" + _camera.IsInHostLiveViewMode + " DownloadEvf=" + ok);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _lvErrorCount++;
-                        if (_lvErrorCount <= 5)
-                        {
-                            Log("LV Poll exception #" + _lvErrorCount + ": " + ex.Message);
-                        }
-                    }
+                    PollLiveViewOnce();
                 }
             };
             lvTimer.Start();
@@ -151,7 +129,7 @@ namespace CanonBridge
                 {
                     try
                     {
-                        var proc = System.Diagnostics.Process.GetProcessById(parentPid);
+                        var proc = Process.GetProcessById(parentPid);
                         proc.WaitForExit();
                     }
                     catch { }
@@ -167,6 +145,46 @@ namespace CanonBridge
             httpThread.Start();
 
             Application.Run();
+        }
+
+        private static void PollLiveViewOnce()
+        {
+            try
+            {
+                if (_sdk == null || !_sdk.IsConnected || _captureInProgress) return;
+
+                if (!_lvStarted)
+                {
+                    _sdk.StartLiveView();
+                    _lvStarted = true;
+                }
+
+                LiveViewData lv = _sdk.GetLiveViewImage();
+                if (lv != null && lv.ImageData != null && lv.ImageData.Length > 100)
+                {
+                    bool firstFrame = false;
+                    lock (_lvLock)
+                    {
+                        if (_latestLvJpeg == null) firstFrame = true;
+                        _latestLvJpeg = lv.ImageData;
+                        _latestLvUtc = DateTime.UtcNow;
+                    }
+                    if (!_lvDiagLogged || firstFrame)
+                    {
+                        _lvDiagLogged = true;
+                        Log("LiveView EVF frame OK (" + lv.ImageData.Length + " bytes)");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _lvStarted = false;
+                _lvErrorCount++;
+                if (_lvErrorCount <= 5)
+                {
+                    Log("LV Poll exception #" + _lvErrorCount + ": " + ex.Message);
+                }
+            }
         }
 
         private static void ConfigureNativeAndAssemblySearchPaths()
@@ -224,9 +242,9 @@ namespace CanonBridge
             if (_framework == null) return;
             try
             {
-                if (_camera != null)
+                if (_sdk != null)
                 {
-                    if (_camera.IsSessionOpen) return;
+                    if (_sdk.IsConnected && _sdk.Camera != null && _sdk.Camera.IsSessionOpen) return;
                     CleanupCamera();
                 }
 
@@ -237,50 +255,66 @@ namespace CanonBridge
                     return;
                 }
 
-                cam.IsErrorTolerantMode = false;
-                cam.EnsureOpenSession();
-                try
+                var sdk = new CanonSDKBase();
+                bool ok = sdk.Init(cam);
+                if (!ok)
                 {
-                    cam.SavePicturesToHost(_tempSaveDir);
-                    Log("SavePicturesToHost OK: " + _tempSaveDir);
+                    try { sdk.Close(); } catch { }
+                    try { cam.Dispose(); } catch { }
+                    _lastError = "CanonSDKBase.Init returned false";
+                    Log(_lastError);
+                    return;
                 }
-                catch (Exception spEx)
-                {
-                    Log("SavePicturesToHost WARN: " + spEx.Message);
-                }
-                cam.IsErrorTolerantMode = true;
-                cam.LiveViewUpdate += OnLiveViewUpdate;
-                cam.PictureTaken += OnPictureTaken;
-                cam.Error += OnCameraError;
-                cam.Shutdown += OnCameraShutdown;
 
-                _camera = cam;
-                _cameraModel = cam.DeviceDescription ?? "Canon EOS";
+                try { sdk.CaptureInSdRam = true; }
+                catch (Exception sdEx) { Log("CaptureInSdRam WARN: " + sdEx.Message); }
+
+                sdk.PhotoCaptured += OnPhotoCaptured;
+                sdk.CameraDisconnected += delegate { OnCameraDisconnected(); };
+
+                _sdk = sdk;
+                _lvStarted = false;
+                _lvDiagLogged = false;
+                _lvErrorCount = 0;
+                _cameraModel = !string.IsNullOrEmpty(sdk.DeviceName)
+                    ? sdk.DeviceName
+                    : (cam.DeviceDescription ?? "Canon EOS");
                 _lastError = "";
-                Log("Connected camera: " + _cameraModel);
+                Log("Connected camera via CanonSDKBase: " + _cameraModel);
 
-                if (_wantLiveView && !cam.IsInLiveViewMode)
+                if (_wantLiveView)
                 {
-                    try { cam.StartLiveView(); } catch (Exception ex) { _lastError = ex.Message; }
+                    try
+                    {
+                        _sdk.StartLiveView();
+                        _lvStarted = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        _lastError = ex.Message;
+                    }
                 }
             }
             catch (Exception ex)
             {
                 _lastError = ex.Message;
+                Log("TryConnectCamera error: " + ex.Message);
                 CleanupCamera();
             }
         }
 
         private static void CleanupCamera()
         {
-            if (_camera != null)
+            _lvStarted = false;
+            if (_sdk != null)
             {
-                try { _camera.LiveViewUpdate -= OnLiveViewUpdate; } catch { }
-                try { _camera.PictureTaken -= OnPictureTaken; } catch { }
-                try { _camera.Error -= OnCameraError; } catch { }
-                try { _camera.Shutdown -= OnCameraShutdown; } catch { }
-                try { _camera.Dispose(); } catch { }
-                _camera = null;
+                try { _sdk.PhotoCaptured -= OnPhotoCaptured; } catch { }
+                try { _sdk.Close(); } catch { }
+                if (_sdk.Camera != null)
+                {
+                    try { _sdk.Camera.Dispose(); } catch { }
+                }
+                _sdk = null;
             }
             _cameraModel = "";
             lock (_lvLock)
@@ -289,115 +323,44 @@ namespace CanonBridge
             }
         }
 
-        private static void OnLiveViewUpdate(object sender, EosLiveImageEventArgs e)
+        private static void OnPhotoCaptured(object sender, PhotoCapturedEventArgs e)
         {
-            try
+            // Transfer on a worker thread so the EDSDK / WinForms STA pump stays responsive
+            ThreadPool.QueueUserWorkItem(delegate
             {
-                byte[] data = e.ImageData;
-                if (data == null || data.Length == 0)
+                var sw = Stopwatch.StartNew();
+                try
                 {
-                    using (Stream s = e.GetStream())
+                    string dest = _captureTargetPath;
+                    Log("PhotoCaptured event fired: FileName=" + (e != null ? e.FileName : ""));
+                    if (!string.IsNullOrEmpty(dest) && e != null && e.CameraDevice != null)
                     {
-                        if (s != null)
-                        {
-                            using (var ms = new MemoryStream())
-                            {
-                                s.CopyTo(ms);
-                                data = ms.ToArray();
-                            }
-                        }
-                    }
-                }
+                        string parent = Path.GetDirectoryName(dest);
+                        if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
 
-                if (data != null && data.Length > 100)
-                {
-                    bool firstFrame = false;
-                    lock (_lvLock)
-                    {
-                        if (_latestLvJpeg == null) firstFrame = true;
-                        _latestLvJpeg = data;
-                        _latestLvUtc = DateTime.UtcNow;
+                        e.CameraDevice.TransferFile(e.Handle, dest);
+                        long bytes = File.Exists(dest) ? new FileInfo(dest).Length : 0;
+                        Log("Transferred DSLR photo (" + bytes + " bytes in " + sw.ElapsedMilliseconds + "ms) -> " + dest);
                     }
-                    if (firstFrame)
-                    {
-                        Log("First LiveView EVF JPEG frame received (" + data.Length + " bytes)");
-                    }
+                    _captureError = null;
                 }
-            }
-            catch { }
+                catch (Exception ex)
+                {
+                    _captureError = ex.Message;
+                    Log("OnPhotoCaptured transfer error: " + ex.Message);
+                }
+                finally
+                {
+                    var evt = _captureDone;
+                    if (evt != null) evt.Set();
+                }
+            });
         }
 
-        private static void OnPictureTaken(object sender, EosImageEventArgs e)
+        private static void OnCameraDisconnected()
         {
-            try
-            {
-                string dest = _captureTargetPath;
-                if (!string.IsNullOrEmpty(dest))
-                {
-                    string parent = Path.GetDirectoryName(dest);
-                    if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
-
-                    var fileArgs = e as EosFileImageEventArgs;
-                    var memArgs = e as EosMemoryImageEventArgs;
-
-                    if (fileArgs != null && !string.IsNullOrEmpty(fileArgs.ImageFilePath) && File.Exists(fileArgs.ImageFilePath))
-                    {
-                        File.Copy(fileArgs.ImageFilePath, dest, true);
-                        try { File.Delete(fileArgs.ImageFilePath); } catch { }
-                    }
-                    else if (memArgs != null && memArgs.ImageData != null && memArgs.ImageData.Length > 0)
-                    {
-                        File.WriteAllBytes(dest, memArgs.ImageData);
-                    }
-                    else
-                    {
-                        using (Stream s = e.GetStream())
-                        {
-                            if (s != null)
-                            {
-                                using (var fs = new FileStream(dest, FileMode.Create, FileAccess.Write))
-                                {
-                                    s.CopyTo(fs);
-                                }
-                            }
-                            else
-                            {
-                                using (var img = e.GetImage())
-                                {
-                                    img.Save(dest, System.Drawing.Imaging.ImageFormat.Jpeg);
-                                }
-                            }
-                        }
-                    }
-                    Log("Saved captured DSLR photo to: " + dest);
-                }
-                _captureError = null;
-            }
-            catch (Exception ex)
-            {
-                _captureError = ex.Message;
-                Log("OnPictureTaken error: " + ex.Message);
-            }
-            finally
-            {
-                var evt = _captureDone;
-                if (evt != null) evt.Set();
-            }
-        }
-
-        private static void OnCameraError(object sender, EosExceptionEventArgs e)
-        {
-            if (e != null && e.Exception != null)
-            {
-                _lastError = e.Exception.Message;
-                Log("Camera error: " + _lastError);
-            }
-        }
-
-        private static void OnCameraShutdown(object sender, EventArgs e)
-        {
-            Log("Camera shutdown event received");
-            CleanupCamera();
+            Log("CameraDisconnected event received");
+            SafeStaInvoke(CleanupCamera);
         }
 
         private static void RunTcpHttpServer(int port)
@@ -484,8 +447,8 @@ namespace CanonBridge
 
                     if (path == "/status")
                     {
-                        bool connected = (_camera != null && _camera.IsSessionOpen) || _captureInProgress;
-                        bool lvActive = (!_captureInProgress && _camera != null && _camera.IsSessionOpen && _camera.IsInLiveViewMode);
+                        bool connected = (_sdk != null && _sdk.IsConnected) || _captureInProgress;
+                        bool lvActive = (!_captureInProgress && _sdk != null && _sdk.IsConnected && _lvStarted);
                         string json = string.Format(
                             "{{\"connected\":{0},\"model\":\"{1}\",\"live_view\":{2},\"capturing\":{3},\"error\":\"{4}\"}}",
                             connected ? "true" : "false",
@@ -504,53 +467,34 @@ namespace CanonBridge
                             return;
                         }
                         _wantLiveView = true;
-                        if (!_captureInProgress && (_camera == null || !_camera.IsSessionOpen))
+                        if (!_captureInProgress && (_sdk == null || !_sdk.IsConnected))
                         {
                             SafeStaInvoke(delegate { if (!_captureInProgress) TryConnectCamera(); });
                         }
 
-                        if (_captureInProgress || _camera == null || !_camera.IsSessionOpen)
+                        if (_captureInProgress || _sdk == null || !_sdk.IsConnected)
                         {
                             WriteHttpText(stream, 503, "Service Unavailable", "Camera busy or not connected");
                             return;
                         }
 
-                        if (!_captureInProgress)
+                        bool needWarm = false;
+                        lock (_lvLock)
                         {
-                            bool needWarm = false;
-                            lock (_lvLock)
+                            needWarm = (_latestLvJpeg == null || (DateTime.UtcNow - _latestLvUtc).TotalSeconds > 2.0);
+                        }
+                        if (needWarm && !_captureInProgress)
+                        {
+                            SafeStaInvoke(delegate { PollLiveViewOnce(); });
+                            for (int w = 0; w < 20; w++)
                             {
-                                needWarm = (_latestLvJpeg == null || (DateTime.UtcNow - _latestLvUtc).TotalSeconds > 2.0);
-                            }
-                            if (needWarm)
-                            {
-                                SafeStaInvoke(delegate
+                                if (_captureInProgress) break;
+                                lock (_lvLock)
                                 {
-                                    try
-                                    {
-                                        if (_camera != null && !_captureInProgress)
-                                        {
-                                            if (!_camera.IsInHostLiveViewMode)
-                                            {
-                                                _camera.StartLiveView();
-                                                if (!_camera.IsInHostLiveViewMode)
-                                                    _camera.LiveViewDevice = EosLiveViewDevice.Host;
-                                            }
-                                            bool warmOk = _camera.DownloadEvf();
-                                            Log("Warmup LV: Device=" + _camera.LiveViewDevice + " IsHost=" + _camera.IsInHostLiveViewMode + " DownloadEvf=" + warmOk);
-                                        }
-                                    }
-                                    catch (Exception ex) { _lastError = ex.Message; Log("Warmup LV ex: " + ex.Message); }
-                                });
-                                for (int w = 0; w < 25; w++)
-                                {
-                                    lock (_lvLock)
-                                    {
-                                        if (_latestLvJpeg != null && (DateTime.UtcNow - _latestLvUtc).TotalSeconds < 2.0)
-                                            break;
-                                    }
-                                    Thread.Sleep(60);
+                                    if (_latestLvJpeg != null && (DateTime.UtcNow - _latestLvUtc).TotalSeconds < 2.0)
+                                        break;
                                 }
+                                Thread.Sleep(50);
                             }
                         }
 
@@ -577,10 +521,13 @@ namespace CanonBridge
                         {
                             try
                             {
-                                if (_camera != null && _camera.IsInLiveViewMode)
-                                    _camera.StopLiveView();
+                                if (_sdk != null && _lvStarted)
+                                {
+                                    _sdk.StopLiveView();
+                                    _lvStarted = false;
+                                }
                             }
-                            catch { }
+                            catch { _lvStarted = false; }
                         });
                         WriteHttpText(stream, 200, "OK", "OK");
                     }
@@ -595,62 +542,147 @@ namespace CanonBridge
 
                         lock (_capLock)
                         {
+                            var capSw = Stopwatch.StartNew();
                             _captureInProgress = true;
                             _captureTargetPath = dest;
                             _captureError = null;
                             _captureDone = new ManualResetEventSlim(false);
 
-                            // Cleanly stop LiveView & release EDSDK session so CameraControlCmd.exe snaps reliably
+                            try
+                            {
+                                string parent = Path.GetDirectoryName(dest);
+                                if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
+                                if (File.Exists(dest)) File.Delete(dest);
+                            }
+                            catch { }
+
+                            bool sdkReady = false;
                             SafeStaInvoke(delegate
                             {
-                                try
+                                if (_sdk == null || !_sdk.IsConnected)
                                 {
-                                    if (_camera != null)
-                                    {
-                                        if (_camera.IsInLiveViewMode || _camera.IsInHostLiveViewMode)
-                                        {
-                                            Log("Stopping LiveView before DSLR snap...");
-                                            _camera.StopLiveView();
-                                            _camera.IsInLiveViewMode = false;
-                                            Thread.Sleep(250);
-                                        }
-                                        CleanupCamera();
-                                    }
+                                    TryConnectCamera();
                                 }
-                                catch (Exception ex)
+                                if (_sdk != null && _sdk.IsConnected)
                                 {
-                                    Log("Pre-capture cleanup WARN: " + ex.Message);
-                                    CleanupCamera();
+                                    sdkReady = true;
+                                    try
+                                    {
+                                        if (_lvStarted)
+                                        {
+                                            _sdk.StopLiveView();
+                                            _lvStarted = false;
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        _lvStarted = false;
+                                        Log("StopLiveView pre-capture WARN: " + ex.Message);
+                                    }
                                 }
                             });
 
-                            Thread.Sleep(200);
-                            string cliErr = RunDigiCamControlCli(dest);
-                            SafeStaInvoke(TryConnectCamera);
-                            _captureInProgress = false;
+                            bool captured = false;
+                            string captureErr = null;
 
-                            if (_wantLiveView)
+                            if (sdkReady)
                             {
+                                Thread.Sleep(100);
+                                bool afTriggered = false;
                                 SafeStaInvoke(delegate
                                 {
                                     try
                                     {
-                                        if (_camera != null && !_camera.IsInHostLiveViewMode)
+                                        if (_sdk != null && _sdk.IsConnected)
                                         {
-                                            _camera.StartLiveView();
-                                            if (!_camera.IsInHostLiveViewMode)
-                                                _camera.LiveViewDevice = EosLiveViewDevice.Host;
+                                            Log("Triggering in-session CapturePhoto() [StopLV at " + capSw.ElapsedMilliseconds + "ms]");
+                                            _sdk.CapturePhoto();
+                                            afTriggered = true;
                                         }
                                     }
-                                    catch { }
+                                    catch (Exception ex)
+                                    {
+                                        Log("CapturePhoto() threw (" + ex.Message + "), falling back to CapturePhotoNoAf()");
+                                        try
+                                        {
+                                            if (_sdk != null && _sdk.IsConnected)
+                                            {
+                                                _sdk.CapturePhotoNoAf();
+                                                afTriggered = true;
+                                            }
+                                        }
+                                        catch (Exception noAfEx)
+                                        {
+                                            captureErr = noAfEx.Message;
+                                            Log("CapturePhotoNoAf() threw: " + noAfEx.Message);
+                                        }
+                                    }
+                                });
+
+                                if (afTriggered)
+                                {
+                                    captured = _captureDone.Wait(4800);
+                                    if (!captured)
+                                    {
+                                        Log("CapturePhoto did not complete within 4800ms, retrying CapturePhotoNoAf()");
+                                        SafeStaInvoke(delegate
+                                        {
+                                            try
+                                            {
+                                                if (_sdk != null && _sdk.IsConnected)
+                                                    _sdk.CapturePhotoNoAf();
+                                            }
+                                            catch (Exception ex2)
+                                            {
+                                                captureErr = ex2.Message;
+                                                Log("Retry CapturePhotoNoAf() threw: " + ex2.Message);
+                                            }
+                                        });
+                                        captured = _captureDone.Wait(6500);
+                                    }
+                                }
+                            }
+
+                            if (!captured || !File.Exists(dest) || new FileInfo(dest).Length <= 10000)
+                            {
+                                Log("In-session capture incomplete (captured=" + captured + ", err=" + (_captureError ?? captureErr ?? "none") + "), falling back to CameraControlCmd.exe");
+                                SafeStaInvoke(CleanupCamera);
+                                Thread.Sleep(150);
+                                string cliErr = RunDigiCamControlCli(dest);
+                                SafeStaInvoke(TryConnectCamera);
+                                captureErr = cliErr;
+                            }
+                            else
+                            {
+                                captureErr = _captureError;
+                            }
+
+                            _captureInProgress = false;
+
+                            if (_wantLiveView)
+                            {
+                                Thread.Sleep(80);
+                                SafeStaInvoke(delegate
+                                {
+                                    try
+                                    {
+                                        if (_sdk != null && _sdk.IsConnected && !_lvStarted)
+                                        {
+                                            _sdk.StartLiveView();
+                                            _lvStarted = true;
+                                        }
+                                    }
+                                    catch { _lvStarted = false; }
                                 });
                             }
 
-                            if (!string.IsNullOrEmpty(cliErr))
+                            Log("Total /capture finished in " + capSw.ElapsedMilliseconds + "ms -> " + (File.Exists(dest) ? "OK" : "FAILED"));
+
+                            if (!string.IsNullOrEmpty(captureErr))
                             {
-                                WriteHttpText(stream, 500, "Internal Server Error", cliErr);
+                                WriteHttpText(stream, 500, "Internal Server Error", captureErr);
                             }
-                            else if (File.Exists(dest))
+                            else if (File.Exists(dest) && new FileInfo(dest).Length > 10000)
                             {
                                 WriteHttpText(stream, 200, "OK", dest);
                             }
@@ -695,14 +727,14 @@ namespace CanonBridge
                 if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
                 if (File.Exists(dest)) File.Delete(dest);
 
-                var psi = new System.Diagnostics.ProcessStartInfo();
+                var psi = new ProcessStartInfo();
                 psi.FileName = cli;
                 psi.Arguments = "/filename \"" + dest.Replace('/', '\\') + "\" /capture";
                 psi.UseShellExecute = false;
                 psi.CreateNoWindow = true;
 
-                Log("Running CLI shutter: " + psi.Arguments);
-                using (var proc = System.Diagnostics.Process.Start(psi))
+                Log("Running CLI fallback shutter: " + psi.Arguments);
+                using (var proc = Process.Start(psi))
                 {
                     if (!proc.WaitForExit(14000))
                     {
@@ -712,7 +744,7 @@ namespace CanonBridge
                 }
                 if (File.Exists(dest) && new FileInfo(dest).Length > 10000)
                 {
-                    Log("CLI captured DSLR photo (" + new FileInfo(dest).Length + " bytes) to " + dest);
+                    Log("CLI fallback captured DSLR photo (" + new FileInfo(dest).Length + " bytes) to " + dest);
                     return null;
                 }
                 return "CLI finished without saving photo";
@@ -729,7 +761,7 @@ namespace CanonBridge
             try { if (_listener != null) _listener.Stop(); } catch { }
             SafeStaInvoke(delegate
             {
-                try { if (_camera != null && _camera.IsInLiveViewMode) _camera.StopLiveView(); } catch { }
+                try { if (_sdk != null && _lvStarted) _sdk.StopLiveView(); } catch { }
                 CleanupCamera();
                 try { if (_framework != null) _framework.Dispose(); } catch { }
                 Application.Exit();
