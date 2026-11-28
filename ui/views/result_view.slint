@@ -77,7 +77,7 @@ export component ResultView {
                                 vertical-alignment: center;
                             }
                             Text {
-                                text: "3. TAKE YOUR PRINT";
+                                text: "3. TAP PRINT PHOTO";
                                 color: #f472b6;
                                 font-size: 13px;
                                 font-weight: 800;
@@ -87,7 +87,7 @@ export component ResultView {
                     }
                 }
 
-                // Auto-return counter pill
+                // Manual print / stay-on-screen badge (no auto-reset)
                 Rectangle {
                     width: 240px;
                     height: 44px;
@@ -100,16 +100,11 @@ export component ResultView {
                         alignment: center;
                         spacing: 8px;
                         Text {
-                            text: "⏱️ Auto-reset in:";
-                            color: Theme.text_muted;
-                            font-size: 13px;
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            text: root.auto_return_seconds + " sec";
+                            text: "🖼️ PREVIEW READY";
                             color: #a5b4fc;
-                            font-size: 15px;
-                            font-weight: 700;
+                            font-size: 13px;
+                            font-weight: 800;
+                            letter-spacing: 0.6px;
                             vertical-alignment: center;
                         }
                     }
@@ -235,11 +230,11 @@ export component ResultView {
                             }
 
                             AnimatedButton {
-                                text: root.is_printing_busy ? "🖨️ SENDING TO PRINTER..." : (root.auto_print_enabled ? "🖨️ PRINT EXTRA COPY (+1)" : "🖨️ PRINT PHOTO");
+                                text: root.is_printing_busy ? "🖨️ SENDING TO PRINTER..." : "🖨️ PRINT PHOTO";
                                 btn_width: 360px;
                                 btn_height: 52px;
                                 font_size: 15px;
-                                primary: !root.auto_print_enabled && !root.is_printing_busy;
+                                primary: !root.is_printing_busy;
                                 enabled: !root.is_printing_busy;
 
                                 clicked => {
@@ -269,7 +264,7 @@ export component ResultView {
                                     btn_width: 175px;
                                     btn_height: 46px;
                                     font_size: 13px;
-                                    primary: true;
+                                    primary: false;
 
                                     clicked => {
                                         root.finish_session();

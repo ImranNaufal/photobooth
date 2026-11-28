@@ -5,7 +5,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex as TokioMutex, RwLock};
-use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -33,7 +32,6 @@ pub struct BoothController {
     is_session_running: Arc<AtomicBool>,
     is_reviewing: Arc<AtomicBool>,
     is_printing_busy: Arc<AtomicBool>,
-    timer_cancel_token: Arc<TokioMutex<Option<CancellationToken>>>,
 }
 
 impl BoothController {
@@ -58,7 +56,6 @@ impl BoothController {
             is_session_running: Arc::new(AtomicBool::new(false)),
             is_reviewing: Arc::new(AtomicBool::new(false)),
             is_printing_busy: Arc::new(AtomicBool::new(false)),
-            timer_cancel_token: Arc::new(TokioMutex::new(None)),
         }
     }
 
@@ -155,34 +152,22 @@ impl BoothController {
             return;
         }
 
-        // Cancel any lingering auto-return timer
-        let timer_token = self.timer_cancel_token.clone();
-        tokio::spawn(async move {
-            let mut tok = timer_token.lock().await;
-            if let Some(t) = tok.take() {
-                t.cancel();
-            }
-        });
-
         let window_weak = self.window.clone();
         let config_lock = self.config.clone();
         let templates_lock = self.templates.clone();
         let camera_provider = self.camera_provider.clone();
         let session_model = self.session_model.clone();
-        let print_controller = self.print_controller.clone();
         let active_session = self.active_session.clone();
         let is_running_flag = self.is_session_running.clone();
         let is_reviewing = self.is_reviewing.clone();
-        let is_printing_busy = self.is_printing_busy.clone();
         let web_service = self.web_service.clone();
-        let timer_cancel_token = self.timer_cancel_token.clone();
 
         tokio::spawn(async move {
             let session_id = Uuid::new_v4().to_string();
             info!("Starting new Photobooth Session: {}", session_id);
 
             // Fetch active template and settings
-            let (template, countdown_seconds, auto_print, auto_timeout) = {
+            let (template, countdown_seconds) = {
                 let cfg = config_lock.read().await;
                 let tmpl_list = templates_lock.read().await;
                 let tmpl = tmpl_list
@@ -190,12 +175,7 @@ impl BoothController {
                     .find(|t| t.id == cfg.active_template_id)
                     .cloned()
                     .unwrap_or_else(|| tmpl_list.first().cloned().unwrap());
-                (
-                    tmpl,
-                    cfg.countdown_seconds,
-                    cfg.auto_print,
-                    cfg.result_timeout_seconds,
-                )
+                (tmpl, cfg.countdown_seconds)
             };
 
             let total_shots = template.slots.len() as u8;
@@ -421,113 +401,12 @@ impl BoothController {
                                 }
 
                                 w.set_current_state(AppState::Result);
-                                w.set_status_message(
-                                    if auto_print {
-                                        "🖨️ Auto-printing 1 copy...".into()
-                                    } else {
-                                        "".into()
-                                    },
-                                );
-                                w.set_is_printing_busy(auto_print);
-                                w.set_auto_return_seconds(auto_timeout as i32);
+                                w.set_status_message("".into());
+                                w.set_auto_print_enabled(false);
+                                w.set_is_printing_busy(false);
+                                w.set_auto_return_seconds(0);
                             }
                         }
-                    });
-
-                    // Auto-print if enabled in config
-                    if auto_print {
-                        is_printing_busy.store(true, Ordering::SeqCst);
-                        let pc = print_controller.clone();
-                        let sid = session_id.clone();
-                        let comp_path_clone = composite_path.clone();
-                        let is_strip = template.is_strip_2x6;
-                        let window_weak_prn = window_weak.clone();
-                        let is_printing_flag = is_printing_busy.clone();
-                        tokio::spawn(async move {
-                            let res = pc.print_session(sid, comp_path_clone, is_strip, 1).await;
-                            let _ = slint::invoke_from_event_loop({
-                                let window_weak = window_weak_prn.clone();
-                                let msg = match &res {
-                                    Ok(_) => "✅ Print sent to DNP DS-RX1!".to_string(),
-                                    Err(e) => format!("⚠️ Auto-print failed: {}", e),
-                                };
-                                move || {
-                                    if let Some(w) = window_weak.upgrade() {
-                                        w.set_status_message(msg.into());
-                                    }
-                                }
-                            });
-                            if let Err(e) = res {
-                                error!("Auto-print failed: {:?}", e);
-                            }
-                            // 3-second anti-spam cooldown before allowing Extra Copy button
-                            tokio::time::sleep(Duration::from_secs(3)).await;
-                            is_printing_flag.store(false, Ordering::SeqCst);
-                            let _ = slint::invoke_from_event_loop(move || {
-                                if let Some(w) = window_weak_prn.upgrade() {
-                                    w.set_is_printing_busy(false);
-                                }
-                            });
-                        });
-                    }
-
-                    // Cooperative Auto-Return Countdown Timer
-                    let window_weak_timer = window_weak.clone();
-                    let session_id_timer = session_id.clone();
-                    let active_session_timer = active_session.clone();
-                    let is_running_timer = is_running_flag.clone();
-                    let cancel_token = CancellationToken::new();
-
-                    {
-                        let mut tok = timer_cancel_token.lock().await;
-                        *tok = Some(cancel_token.clone());
-                    }
-
-                    tokio::spawn(async move {
-                        for sec in (0..=auto_timeout).rev() {
-                            let _ = slint::invoke_from_event_loop({
-                                let window_weak = window_weak_timer.clone();
-                                move || {
-                                    if let Some(w) = window_weak.upgrade() {
-                                        if w.get_current_state() == AppState::Result {
-                                            w.set_auto_return_seconds(sec as i32);
-                                        }
-                                    }
-                                }
-                            });
-
-                            tokio::select! {
-                                _ = cancel_token.cancelled() => {
-                                    info!("Auto-return timer successfully cancelled by user action.");
-                                    return;
-                                }
-                                _ = tokio::time::sleep(Duration::from_millis(1000)) => {}
-                            }
-
-                            // Check if user manually finished or retook session
-                            let active_id = {
-                                let act = active_session_timer.lock().await;
-                                act.as_ref().map(|a| a.session_id.clone())
-                            };
-                            if active_id.as_deref() != Some(&session_id_timer) {
-                                info!("Session changed, stopping auto-return timer.");
-                                return;
-                            }
-                        }
-
-                        // Reset to Idle
-                        let _ = slint::invoke_from_event_loop({
-                            let window_weak = window_weak_timer.clone();
-                            move || {
-                                if let Some(w) = window_weak.upgrade() {
-                                    if w.get_current_state() == AppState::Result {
-                                        w.set_current_state(AppState::Idle);
-                                        w.set_status_message("".into());
-                                    }
-                                }
-                            }
-                        });
-                        is_running_timer.store(false, Ordering::SeqCst);
                     });
                 }
                 _ => {
@@ -559,15 +438,6 @@ impl BoothController {
             return;
         }
 
-        // Cancel auto-return timer so guest is not kicked out mid-print
-        let timer_token = self.timer_cancel_token.clone();
-        tokio::spawn(async move {
-            let mut tok = timer_token.lock().await;
-            if let Some(t) = tok.take() {
-                t.cancel();
-            }
-        });
-
         let active_session = self.active_session.clone();
         let print_controller = self.print_controller.clone();
         let window_weak = self.window.clone();
@@ -585,7 +455,7 @@ impl BoothController {
                     move || {
                         if let Some(w) = window_weak.upgrade() {
                             w.set_is_printing_busy(true);
-                            w.set_status_message("🖨️ Sending extra copy to printer...".into());
+                            w.set_status_message("🖨️ Sending photo to printer...".into());
                         }
                     }
                 });
@@ -595,7 +465,7 @@ impl BoothController {
                     .await;
 
                 let msg = match &res {
-                    Ok(_) => "✅ Extra copy sent to printer!".to_string(),
+                    Ok(_) => "✅ Print sent to printer!".to_string(),
                     Err(e) => {
                         error!("Print error: {:?}", e);
                         format!("⚠️ Print failed: {}", e)
@@ -624,18 +494,11 @@ impl BoothController {
     }
 
     pub fn handle_finish_session(&self) {
-        let timer_token = self.timer_cancel_token.clone();
         let active_session = self.active_session.clone();
         let is_running_flag = self.is_session_running.clone();
         let window_weak = self.window.clone();
 
         tokio::spawn(async move {
-            {
-                let mut tok = timer_token.lock().await;
-                if let Some(t) = tok.take() {
-                    t.cancel();
-                }
-            }
             {
                 let mut act = active_session.lock().await;
                 *act = None;
@@ -653,18 +516,11 @@ impl BoothController {
 
     pub fn handle_retake_session(self: &Arc<Self>) {
         info!("Guest requested Retake Session");
-        let timer_token = self.timer_cancel_token.clone();
         let active_session = self.active_session.clone();
         let is_running_flag = self.is_session_running.clone();
         let self_clone = self.clone();
 
         tokio::spawn(async move {
-            {
-                let mut tok = timer_token.lock().await;
-                if let Some(t) = tok.take() {
-                    t.cancel();
-                }
-            }
             {
                 let mut act = active_session.lock().await;
                 *act = None;

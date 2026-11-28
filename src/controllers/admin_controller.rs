@@ -68,7 +68,7 @@ impl AdminController {
         printer_name: String,
         countdown_sec: i32,
         allow_guest_layout_choice: bool,
-        auto_print: bool,
+        _auto_print: bool,
     ) {
         let config_clone = self.config.clone();
         let camera_provider = self.camera_provider.clone();
@@ -83,7 +83,8 @@ impl AdminController {
                 cfg.printer_name = printer_name.clone();
                 cfg.countdown_seconds = countdown_sec.clamp(1, 10) as u8;
                 cfg.allow_guest_layout_choice = allow_guest_layout_choice;
-                cfg.auto_print = auto_print;
+                cfg.auto_print = false;
+                cfg.result_timeout_seconds = 0;
 
                 if let Err(e) = cfg.save() {
                     error!("Failed to save config: {:?}", e);
@@ -136,7 +137,7 @@ impl AdminController {
                     w.set_active_template_id(template_id.into());
                     w.set_countdown_seconds_setting(countdown_sec);
                     w.set_allow_guest_layout_choice(allow_guest_layout_choice);
-                    w.set_auto_print_enabled(auto_print);
+                    w.set_auto_print_enabled(false);
                     w.set_status_message("Settings saved & hardware reloaded!".into());
                 }
             });

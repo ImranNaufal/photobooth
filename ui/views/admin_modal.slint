@@ -438,7 +438,7 @@ export component AdminModal {
                 }
             }
 
-            // Setting 3: Countdown & Auto-Print Behavior
+            // Setting 3: Capture Countdown
             Rectangle {
                 height: 62px;
                 border-radius: Theme.radius_md;
@@ -453,13 +453,13 @@ export component AdminModal {
                     VerticalLayout {
                         alignment: center;
                         Text {
-                            text: "Countdown & Auto-Print";
+                            text: "Capture Countdown";
                             color: Theme.text_primary;
                             font-size: 16px;
                             font-weight: 700;
                         }
                         Text {
-                            text: root.countdown_sec + "s countdown • Auto-print after session";
+                            text: root.countdown_sec + "s countdown before shutter fires (manual Print button)";
                             color: Theme.text_secondary;
                             font-size: 12px;
                         }
@@ -482,25 +482,6 @@ export component AdminModal {
                                 color: #ffffff;
                                 font-size: 12px;
                                 font-weight: 700;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
-                        }
-
-                        Rectangle {
-                            width: 135px;
-                            height: 36px;
-                            border-radius: Theme.radius_pill;
-                            background: root.auto_print_enabled ? #059669 : #475569;
-
-                            TouchArea {
-                                clicked => { root.toggle_auto_print(); }
-                            }
-                            Text {
-                                text: root.auto_print_enabled ? "Auto-Print: ON" : "Auto-Print: OFF";
-                                color: #ffffff;
-                                font-size: 11px;
-                                font-weight: 800;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
                             }

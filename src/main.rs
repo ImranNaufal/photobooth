@@ -92,8 +92,8 @@ fn main() -> anyhow::Result<()> {
     window.set_printer_name(config.printer_name.clone().into());
     window.set_countdown_seconds_setting(config.countdown_seconds as i32);
     window.set_allow_guest_layout_choice(config.allow_guest_layout_choice);
-    window.set_auto_print_enabled(config.auto_print);
-    window.set_auto_return_seconds(config.result_timeout_seconds as i32);
+    window.set_auto_print_enabled(false);
+    window.set_auto_return_seconds(0);
     window.set_app_version(format!("v{}", models::APP_VERSION).into());
     window.set_current_state(AppState::Idle);
 
