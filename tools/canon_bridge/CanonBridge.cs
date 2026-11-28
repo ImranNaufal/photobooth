@@ -484,28 +484,34 @@ namespace CanonBridge
 
                     if (path == "/status")
                     {
-                        bool connected = (_camera != null && _camera.IsSessionOpen);
-                        bool lvActive = (connected && _camera.IsInLiveViewMode);
+                        bool connected = (_camera != null && _camera.IsSessionOpen) || _captureInProgress;
+                        bool lvActive = (!_captureInProgress && _camera != null && _camera.IsSessionOpen && _camera.IsInLiveViewMode);
                         string json = string.Format(
-                            "{{\"connected\":{0},\"model\":\"{1}\",\"live_view\":{2},\"error\":\"{3}\"}}",
+                            "{{\"connected\":{0},\"model\":\"{1}\",\"live_view\":{2},\"capturing\":{3},\"error\":\"{4}\"}}",
                             connected ? "true" : "false",
                             EscapeJson(_cameraModel),
                             lvActive ? "true" : "false",
+                            _captureInProgress ? "true" : "false",
                             EscapeJson(_lastError)
                         );
                         WriteHttpBytes(stream, 200, "OK", "application/json", Encoding.UTF8.GetBytes(json));
                     }
                     else if (path == "/liveview.jpg")
                     {
-                        _wantLiveView = true;
-                        if (_camera == null || !_camera.IsSessionOpen)
+                        if (_captureInProgress)
                         {
-                            SafeStaInvoke(TryConnectCamera);
+                            WriteHttpText(stream, 503, "Service Unavailable", "Capture in progress");
+                            return;
+                        }
+                        _wantLiveView = true;
+                        if (!_captureInProgress && (_camera == null || !_camera.IsSessionOpen))
+                        {
+                            SafeStaInvoke(delegate { if (!_captureInProgress) TryConnectCamera(); });
                         }
 
-                        if (_camera == null || !_camera.IsSessionOpen)
+                        if (_captureInProgress || _camera == null || !_camera.IsSessionOpen)
                         {
-                            WriteHttpText(stream, 503, "Service Unavailable", "Camera not connected");
+                            WriteHttpText(stream, 503, "Service Unavailable", "Camera busy or not connected");
                             return;
                         }
 

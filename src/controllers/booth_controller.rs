@@ -244,6 +244,9 @@ impl BoothController {
                     tokio::time::sleep(Duration::from_millis(1000)).await;
                 }
 
+                // Pause background LiveView polling while camera switches from EVF mirror to DSLR shutter!
+                is_reviewing.store(true, Ordering::SeqCst);
+
                 // Signal guest to hold pose while camera focuses and snaps
                 let _ = slint::invoke_from_event_loop({
                     let window_weak = window_weak.clone();

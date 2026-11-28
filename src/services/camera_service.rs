@@ -186,7 +186,7 @@ impl Canon700dCamera {
             .unwrap_or_default();
 
         let capture_client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(18))
+            .timeout(Duration::from_secs(24))
             .build()
             .unwrap_or_default();
 
@@ -210,6 +210,12 @@ impl Canon700dCamera {
     }
 
     fn ensure_bridge_running(&self) {
+        // Fast TCP probe prevents spawning a duplicate bridge when an HTTP call is busy
+        if let Ok(addr) = "127.0.0.1:5513".parse() {
+            if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
+                return;
+            }
+        }
         let status_url = format!("{}/status", self.base_url.trim_end_matches('/'));
         if self.client.get(&status_url).send().is_ok() {
             return;
