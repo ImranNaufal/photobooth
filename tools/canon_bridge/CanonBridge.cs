@@ -89,7 +89,7 @@ namespace CanonBridge
                 Log(_lastError);
             }
 
-            // Reconnect / LiveView watchdog timer on STA thread
+            // Reconnect watchdog timer on STA thread (1500ms)
             var timer = new System.Windows.Forms.Timer();
             timer.Interval = 1500;
             timer.Tick += delegate
@@ -98,12 +98,28 @@ namespace CanonBridge
                 {
                     TryConnectCamera();
                 }
-                else if (_wantLiveView && !_captureInProgress && !_camera.IsInLiveViewMode)
-                {
-                    try { _camera.StartLiveView(); } catch { }
-                }
             };
             timer.Start();
+
+            // Active EVF Live View polling timer on STA thread (~28 FPS while _wantLiveView is true)
+            var lvTimer = new System.Windows.Forms.Timer();
+            lvTimer.Interval = 35;
+            lvTimer.Tick += delegate
+            {
+                if (_wantLiveView && !_captureInProgress && _camera != null && _camera.IsSessionOpen)
+                {
+                    try
+                    {
+                        if (!_camera.IsInLiveViewMode)
+                        {
+                            _camera.StartLiveView();
+                        }
+                        _camera.DownloadEvf();
+                    }
+                    catch { }
+                }
+            };
+            lvTimer.Start();
 
             // Watch parent process if specified so bridge never orphans
             if (parentPid > 0)
@@ -263,10 +279,16 @@ namespace CanonBridge
 
                 if (data != null && data.Length > 100)
                 {
+                    bool firstFrame = false;
                     lock (_lvLock)
                     {
+                        if (_latestLvJpeg == null) firstFrame = true;
                         _latestLvJpeg = data;
                         _latestLvUtc = DateTime.UtcNow;
+                    }
+                    if (firstFrame)
+                    {
+                        Log("First LiveView EVF JPEG frame received (" + data.Length + " bytes)");
                     }
                 }
             }
@@ -455,25 +477,36 @@ namespace CanonBridge
                             return;
                         }
 
-                        if (!_camera.IsInLiveViewMode && !_captureInProgress)
+                        if (!_captureInProgress)
                         {
-                            SafeStaInvoke(delegate
+                            bool needWarm = false;
+                            lock (_lvLock)
                             {
-                                try
-                                {
-                                    if (_camera != null && !_camera.IsInLiveViewMode && !_captureInProgress)
-                                        _camera.StartLiveView();
-                                }
-                                catch (Exception ex) { _lastError = ex.Message; }
-                            });
-                            for (int w = 0; w < 15; w++)
+                                needWarm = (_latestLvJpeg == null || (DateTime.UtcNow - _latestLvUtc).TotalSeconds > 2.0);
+                            }
+                            if (needWarm)
                             {
-                                lock (_lvLock)
+                                SafeStaInvoke(delegate
                                 {
-                                    if (_latestLvJpeg != null && (DateTime.UtcNow - _latestLvUtc).TotalSeconds < 2.0)
-                                        break;
+                                    try
+                                    {
+                                        if (_camera != null && !_captureInProgress)
+                                        {
+                                            if (!_camera.IsInLiveViewMode) _camera.StartLiveView();
+                                            _camera.DownloadEvf();
+                                        }
+                                    }
+                                    catch (Exception ex) { _lastError = ex.Message; }
+                                });
+                                for (int w = 0; w < 25; w++)
+                                {
+                                    lock (_lvLock)
+                                    {
+                                        if (_latestLvJpeg != null && (DateTime.UtcNow - _latestLvUtc).TotalSeconds < 2.0)
+                                            break;
+                                    }
+                                    Thread.Sleep(60);
                                 }
-                                Thread.Sleep(50);
                             }
                         }
 
