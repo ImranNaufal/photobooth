@@ -58,6 +58,9 @@ if ((Test-Path $cscPath) -and (Test-Path ".\tools\canon_bridge\CanonBridge.cs") 
     if ($LASTEXITCODE -ne 0) { throw "CanonBridge.cs compilation failed" }
     Copy-Item ".\tools\canon_bridge\lib\*.dll" "$distDir\" -Force
 }
+if (Test-Path ".\tools\cloudflared\cloudflared.exe") {
+    Copy-Item ".\tools\cloudflared\cloudflared.exe" "$distDir\cloudflared.exe" -Force
+}
 Copy-Item ".\assets\templates\*" "$distDir\assets\templates\" -Recurse
 Copy-Item ".\assets\icons\app_icon.ico" "$distDir\assets\icons\"
 if (Test-Path ".\config.json") { Copy-Item ".\config.json" "$distDir\config.json" }

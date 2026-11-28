@@ -44,6 +44,9 @@ fn main() -> anyhow::Result<()> {
 
     // 3. Bootstrap directories and sample assets
     BootstrapService::ensure_directories_and_assets()?;
+    tokio::task::spawn_blocking(|| {
+        BootstrapService::cleanup_old_files(std::path::Path::new("output/raw"), 7);
+    });
 
     // 4. Load Models & Persistence
     let config = AppConfig::load_or_default(CONFIG_FILE_PATH);
@@ -232,6 +235,15 @@ fn main() -> anyhow::Result<()> {
 
     // 11. Run main UI loop
     window.run()?;
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/IM", "cloudflared.exe"])
+            .creation_flags(0x08000000)
+            .status();
+    }
 
     info!("Photobooth application terminated normally.");
     Ok(())

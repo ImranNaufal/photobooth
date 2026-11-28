@@ -6,11 +6,13 @@ use axum::{
     routing::get,
     Router,
 };
+use std::io::{BufRead, BufReader};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path as StdPath, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::{Arc, RwLock as StdRwLock};
 use tokio::fs;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::services::LoggerService;
 
@@ -18,6 +20,7 @@ use crate::services::LoggerService;
 pub struct WebService {
     local_ip: IpAddr,
     port: u16,
+    public_url: Arc<StdRwLock<Option<String>>>,
 }
 
 impl WebService {
@@ -27,7 +30,11 @@ impl WebService {
             "WebService initialized with local IP: {}:{}",
             local_ip, port
         );
-        Self { local_ip, port }
+        Self {
+            local_ip,
+            port,
+            public_url: Arc::new(StdRwLock::new(None)),
+        }
     }
 
     /// Auto-detects primary local network IP (WiFi / Ethernet / Hotspot)
@@ -44,11 +51,25 @@ impl WebService {
     }
 
     pub fn get_share_url(&self, session_id: &str) -> String {
+        if let Ok(guard) = self.public_url.read() {
+            if let Some(ref base) = *guard {
+                return format!("{}/s/{}", base.trim_end_matches('/'), session_id);
+            }
+        }
         format!("http://{}:{}/s/{}", self.local_ip, self.port, session_id)
+    }
+
+    pub fn is_public_tunnel_active(&self) -> bool {
+        self.public_url
+            .read()
+            .map(|g| g.is_some())
+            .unwrap_or(false)
     }
 
     pub fn start_background_server(self: Arc<Self>) {
         let port = self.port;
+        let public_url = self.public_url.clone();
+
         tokio::spawn(async move {
             let app = Router::new()
                 .route("/", get(handle_root))
@@ -59,6 +80,7 @@ impl WebService {
                 .route("/photo/:id", get(handle_photo))
                 .route("/download/:id", get(handle_download))
                 .route("/raw/:id/:pose", get(handle_raw_photo))
+                .route("/raw_thumb/:id/:pose", get(handle_raw_thumb))
                 .route("/raw_download/:id/:pose", get(handle_raw_download));
 
             let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -66,6 +88,11 @@ impl WebService {
 
             match tokio::net::TcpListener::bind(addr).await {
                 Ok(listener) => {
+                    // Launch Cloudflare Quick Tunnel supervisor so guests on 4G/5G can scan QR seamlessly
+                    std::thread::spawn(move || {
+                        run_cloudflared_supervisor(port, public_url);
+                    });
+
                     if let Err(e) = axum::serve(listener, app).await {
                         error!("Photobooth Web Server crashed: {:?}", e);
                     }
@@ -78,6 +105,106 @@ impl WebService {
                 }
             }
         });
+    }
+}
+
+fn find_cloudflared_binary() -> Option<PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let p = dir.join("cloudflared.exe");
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+    let candidates = [
+        StdPath::new("cloudflared.exe"),
+        StdPath::new("tools/cloudflared/cloudflared.exe"),
+        StdPath::new(r"C:\Program Files (x86)\cloudflared\cloudflared.exe"),
+        StdPath::new(r"C:\Program Files\cloudflared\cloudflared.exe"),
+    ];
+    for c in &candidates {
+        if c.exists() {
+            return Some(c.to_path_buf());
+        }
+    }
+    Some(PathBuf::from("cloudflared.exe"))
+}
+
+fn extract_trycloudflare_url(line: &str) -> Option<String> {
+    let start = line.find("https://")?;
+    let rest = &line[start..];
+    let end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == ':' || c == '/'))
+        .unwrap_or(rest.len());
+    let candidate = rest[..end].trim_end_matches('/');
+    if candidate.ends_with(".trycloudflare.com") && candidate.len() > "https://.trycloudflare.com".len() {
+        Some(candidate.to_string())
+    } else {
+        None
+    }
+}
+
+fn run_cloudflared_supervisor(port: u16, public_url: Arc<StdRwLock<Option<String>>>) {
+    #[cfg(target_os = "windows")]
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    loop {
+        let Some(bin) = find_cloudflared_binary() else {
+            return;
+        };
+
+        // Kill any orphaned cloudflared.exe from previous sessions
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            let _ = Command::new("taskkill")
+                .args(["/F", "/IM", "cloudflared.exe"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .status();
+        }
+
+        let target = format!("http://127.0.0.1:{}", port);
+        let mut cmd = Command::new(&bin);
+        cmd.args(["tunnel", "--no-autoupdate", "--url", &target])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        match cmd.spawn() {
+            Ok(mut child) => {
+                info!("Spawned cloudflared tunnel process for {}", target);
+                if let Some(stderr) = child.stderr.take() {
+                    let reader = BufReader::new(stderr);
+                    for line_res in reader.lines() {
+                        if let Ok(line) = line_res {
+                            if let Some(url) = extract_trycloudflare_url(&line) {
+                                info!("🌐 Public QR Tunnel ready: {}", url);
+                                if let Ok(mut guard) = public_url.write() {
+                                    *guard = Some(url);
+                                }
+                            }
+                        }
+                    }
+                }
+                let _ = child.wait();
+                warn!("cloudflared tunnel exited; clearing public URL and retrying in 5s...");
+                if let Ok(mut guard) = public_url.write() {
+                    *guard = None;
+                }
+            }
+            Err(e) => {
+                warn!("cloudflared unavailable ({:?}); QR uses local WiFi IP fallback", e);
+                return;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_secs(5));
     }
 }
 
@@ -119,7 +246,7 @@ async fn handle_share_page(Path(id): Path<String>) -> Html<String> {
         if raw_path.exists() {
             raw_cards.push_str(&format!(
                 r#"<div class="raw-card">
-                    <img src="/raw/{id}/{pose}" alt="Pose {pose}" loading="lazy">
+                    <img src="/raw_thumb/{id}/{pose}" alt="Pose {pose}" loading="lazy">
                     <a href="/raw_download/{id}/{pose}" class="btn-sm" download="pose_{pose}_{id}.jpg">⬇ Pose {pose}</a>
                 </div>"#,
                 id = sanitized_id,
@@ -280,6 +407,40 @@ async fn handle_share_page(Path(id): Path<String>) -> Html<String> {
     );
 
     Html(html)
+}
+
+async fn handle_raw_thumb(Path((id, pose)): Path<(String, String)>) -> Result<Response<Body>, StatusCode> {
+    let sanitized_id: String = id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    if !matches!(pose.as_str(), "1" | "2" | "3") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let path = PathBuf::from("output/raw").join(format!("session_{}_pose_{}.jpg", sanitized_id, pose));
+    if !path.exists() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    let thumb_res = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
+        let img = image::open(&path)?;
+        let resized = img.resize(480, 320, image::imageops::FilterType::Triangle);
+        let mut buf = std::io::Cursor::new(Vec::new());
+        resized.write_to(&mut buf, image::ImageFormat::Jpeg)?;
+        Ok(buf.into_inner())
+    })
+    .await;
+
+    match thumb_res {
+        Ok(Ok(data)) => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "image/jpeg")
+            .header(header::CACHE_CONTROL, "public, max-age=86400")
+            .body(Body::from(data))
+            .unwrap()),
+        _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }
 
 async fn handle_raw_photo(Path((id, pose)): Path<(String, String)>) -> Result<Response<Body>, StatusCode> {

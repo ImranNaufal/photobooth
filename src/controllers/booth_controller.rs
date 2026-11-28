@@ -207,7 +207,9 @@ impl BoothController {
             // Brief pause before countdown starts
             tokio::time::sleep(Duration::from_millis(1000)).await;
 
-            let mut captured_paths = Vec::new();
+            let mut slot_prep_tasks: Vec<tokio::task::JoinHandle<Option<image::RgbaImage>>> =
+                Vec::with_capacity(total_shots as usize);
+            let mut session_aborted = false;
 
             for shot_idx in 1..=total_shots {
                 is_reviewing.store(false, Ordering::SeqCst);
@@ -254,31 +256,85 @@ impl BoothController {
                     .join("raw")
                     .join(format!("session_{}_pose_{}.jpg", session_id, shot_idx));
 
-                // Capture photo from DSLR / Camera
-                let cam = camera_provider.read().await;
-                let capture_res = cam.capture_photo(&shot_dest, shot_idx);
-                drop(cam);
+                // Capture photo from DSLR / Camera (with 1 automatic retry on transient failure)
+                let mut capture_res = {
+                    let cam_lock = camera_provider.clone();
+                    let dest = shot_dest.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let cam = cam_lock.blocking_read();
+                        cam.capture_photo(&dest, shot_idx)
+                    })
+                    .await
+                    .unwrap_or_else(|e| Err(anyhow::anyhow!("Capture task panicked: {}", e)))
+                };
+
+                if let Err(ref first_err) = capture_res {
+                    warn!("Pose #{} capture failed ({:?}), retrying once...", shot_idx, first_err);
+                    let _ = slint::invoke_from_event_loop({
+                        let window_weak = window_weak.clone();
+                        move || {
+                            if let Some(w) = window_weak.upgrade() {
+                                w.set_status_message("📸 Retrying shot...".into());
+                            }
+                        }
+                    });
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    capture_res = {
+                        let cam_lock = camera_provider.clone();
+                        let dest = shot_dest.clone();
+                        tokio::task::spawn_blocking(move || {
+                            let cam = cam_lock.blocking_read();
+                            cam.capture_photo(&dest, shot_idx)
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(anyhow::anyhow!("Capture retry panicked: {}", e)))
+                    };
+                }
 
                 match capture_res {
                     Ok(path) => {
-                        captured_paths.push(path.clone());
-
                         // Fire shutter sound & flash right as the real snap completes
                         AudioService::play_shutter_click();
                         is_reviewing.store(true, Ordering::SeqCst);
 
-                        // Immediately reveal captured photo mirrored cleanly (matching Live View) under flash fade
-                        if let Ok(img) = image::open(&path) {
-                            let preview_img = img.resize(1280, 853, image::imageops::FilterType::Triangle);
-                            let mirrored = image::imageops::flip_horizontal(&preview_img.to_rgb8());
-                            let (w_img, h_img) = mirrored.dimensions();
-                            let raw_bytes = mirrored.into_raw();
+                        let slot_dims = template
+                            .slots
+                            .get(shot_idx.saturating_sub(1) as usize)
+                            .map(|s| (s.width, s.height))
+                            .unwrap_or((810, 510));
 
+                        // Decode once in blocking pool: produce mirrored freeze preview + queue slot prep
+                        let path_for_preview = path.clone();
+                        let (preview_tx, preview_rx) = tokio::sync::oneshot::channel();
+                        let prep_handle = tokio::task::spawn_blocking(move || {
+                            if let Ok(dyn_img) = image::open(&path_for_preview) {
+                                let preview_img =
+                                    dyn_img.resize(1280, 853, image::imageops::FilterType::Triangle);
+                                let mirrored = image::imageops::flip_horizontal(&preview_img.to_rgb8());
+                                let (w_img, h_img) = mirrored.dimensions();
+                                let _ = preview_tx.send(Some((mirrored.into_raw(), w_img, h_img)));
+                                CompositorService::prepare_slot_from_dynamic(
+                                    &dyn_img,
+                                    slot_dims.0,
+                                    slot_dims.1,
+                                )
+                                .ok()
+                            } else {
+                                let _ = preview_tx.send(None);
+                                None
+                            }
+                        });
+                        slot_prep_tasks.push(prep_handle);
+
+                        if let Ok(Some((raw_bytes, w_img, h_img))) = preview_rx.await {
                             let _ = slint::invoke_from_event_loop({
                                 let window_weak = window_weak.clone();
                                 move || {
                                     if let Some(w) = window_weak.upgrade() {
-                                        let mut pixel_buffer = slint::SharedPixelBuffer::<slint::Rgb8Pixel>::new(w_img, h_img);
+                                        let mut pixel_buffer =
+                                            slint::SharedPixelBuffer::<slint::Rgb8Pixel>::new(
+                                                w_img, h_img,
+                                            );
                                         pixel_buffer.make_mut_bytes().copy_from_slice(&raw_bytes);
                                         let slint_img = slint::Image::from_rgb8(pixel_buffer);
                                         w.set_live_view_image(slint_img);
@@ -299,7 +355,9 @@ impl BoothController {
                         }
                     }
                     Err(e) => {
-                        error!("Failed to capture pose #{}: {:?}", shot_idx, e);
+                        error!("Failed to capture pose #{} after retry: {:?}", shot_idx, e);
+                        session_aborted = true;
+                        break;
                     }
                 }
 
@@ -326,6 +384,23 @@ impl BoothController {
                 cam.stop_live_view();
             }
 
+            if session_aborted {
+                let _ = slint::invoke_from_event_loop({
+                    let window_weak = window_weak.clone();
+                    move || {
+                        if let Some(w) = window_weak.upgrade() {
+                            w.set_flash_active(false);
+                            w.set_current_state(AppState::Idle);
+                            w.set_status_message(
+                                "Camera error. Please check DSLR & try again.".into(),
+                            );
+                        }
+                    }
+                });
+                is_running_flag.store(false, Ordering::SeqCst);
+                return;
+            }
+
             // Switch to Processing State
             let _ = slint::invoke_from_event_loop({
                 let window_weak = window_weak.clone();
@@ -337,11 +412,21 @@ impl BoothController {
                 }
             });
 
-            // Run Compositing in blocking thread pool
+            // Collect pre-resized slots (poses 1 & 2 are already done; pose 3 finishes fast)
+            let mut prepared_slots = Vec::with_capacity(slot_prep_tasks.len());
+            for handle in slot_prep_tasks {
+                prepared_slots.push(handle.await.ok().flatten());
+            }
+
+            // Run final overlay + JPEG encode in blocking thread pool
             let session_id_clone = session_id.clone();
             let template_clone = template.clone();
             let compose_res = tokio::task::spawn_blocking(move || {
-                CompositorService::compose(&captured_paths, &template_clone, &session_id_clone)
+                CompositorService::compose_prepared(
+                    &prepared_slots,
+                    &template_clone,
+                    &session_id_clone,
+                )
             })
             .await;
 
@@ -354,8 +439,9 @@ impl BoothController {
 
                     // Generate Real Mobile Download URL & QR Code
                     let share_url = web_service.get_share_url(&session_id);
-                    info!("Guest download share URL: {}", share_url);
-                    let qr_res = QrService::generate_qr_rgb8(&share_url, 300);
+                    let qr_is_public = web_service.is_public_tunnel_active();
+                    info!("Guest download share URL (public={}): {}", qr_is_public, share_url);
+                    let qr_res = QrService::generate_qr_rgb8(&share_url, 320);
 
                     // Record session in SQLite database
                     let new_session = PhotoSession {
@@ -412,6 +498,7 @@ impl BoothController {
                                     }
                                 }
 
+                                w.set_qr_is_public(qr_is_public);
                                 w.set_current_state(AppState::Result);
                                 w.set_status_message("".into());
                                 w.set_auto_print_enabled(false);

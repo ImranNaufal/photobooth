@@ -30,6 +30,7 @@ export component AppWindow inherits Window {
     in-out property <image> live_view_image;
     in-out property <image> composite_result_image;
     in-out property <image> qr_code_image;
+    in-out property <bool> qr_is_public: false;
     in-out property <int> countdown_value: 0;
     in-out property <int> current_shot: 1;
     in-out property <int> total_shots: 3;
@@ -117,6 +118,7 @@ export component AppWindow inherits Window {
         height: 100%;
         composite_result_image: root.composite_result_image;
         qr_code_image: root.qr_code_image;
+        qr_is_public: root.qr_is_public;
         status_message: root.status_message;
         auto_return_seconds: root.auto_return_seconds;
         is_printing_busy: root.is_printing_busy;
